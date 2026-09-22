@@ -184,7 +184,8 @@ export class WhatsAppDom {
         composer.dispatchEvent(new Event('input', { bubbles: true }));
       }
     };
-    const moveCaretToEnd = () => {
+    const finish = () => {
+      notifyInput();
       try {
         const selection = window.getSelection();
         const range = document.createRange();
@@ -193,51 +194,56 @@ export class WhatsAppDom {
         selection.removeAllRanges();
         selection.addRange(range);
       } catch {}
+      return true;
     };
 
     composer.focus();
 
-    // 1) Prefer an editing command with an explicit selection restricted to the
-    // WhatsApp composer. Do not trust execCommand's boolean return value:
-    // Chromium can return true even when Lexical keeps the previous content.
+    // 1) Same replacement method already used successfully by the Locenza CRM
+    // extension. Verify the real composer content instead of trusting the
+    // boolean returned by execCommand.
+    try {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, value);
+    } catch {}
+    if (current() === expected) return finish();
+
+    // 2) Restrict the selection explicitly to the WhatsApp contenteditable.
     try {
       selectComposer();
       document.execCommand('insertText', false, value);
     } catch {}
-    if (current() === expected) {
-      moveCaretToEnd();
-      return true;
-    }
+    if (current() === expected) return finish();
 
-    // 2) Some WhatsApp/Lexical builds only accept replacement after a separate
-    // delete operation.
+    // 3) Some Lexical versions need an explicit delete before insertText.
     try {
       selectComposer();
       document.execCommand('delete', false, null);
       document.execCommand('insertText', false, value);
     } catch {}
-    if (current() === expected) {
-      moveCaretToEnd();
-      return true;
-    }
+    if (current() === expected) return finish();
 
-    // 3) Last-resort DOM replacement. Dispatch input afterwards so React/Lexical
-    // can reconcile its internal state from the contenteditable value.
+    // 4) Last resort: update the contenteditable itself and fire input so the
+    // WhatsApp editor can reconcile its internal state.
     try {
-      if (typeof composer.replaceChildren === 'function' && typeof document.createTextNode === 'function') {
-        composer.replaceChildren(document.createTextNode(value));
-      } else {
-        composer.textContent = value;
-        if ('innerText' in composer) composer.innerText = value;
-      }
+      composer.textContent = value;
+      if ('innerText' in composer) composer.innerText = value;
       notifyInput();
     } catch {
       return false;
     }
 
-    const replaced = current() === expected;
-    if (replaced) moveCaretToEnd();
-    return replaced;
+    if (current() !== expected) return false;
+
+    try {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(composer);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {}
+    return true;
   }
 
   findSendButton(composer = this.getComposer()) {
@@ -252,8 +258,10 @@ export class WhatsAppDom {
     // but fall back to the current footer and finally #main.
     addRoot(composer.closest('[data-testid="compose-box"]'));
     addRoot(composer.closest('footer'));
-    addRoot(document.querySelector('#main footer'));
-    addRoot(document.querySelector('#main'));
+    if (typeof document !== 'undefined') {
+      addRoot(document.querySelector('#main footer'));
+      addRoot(document.querySelector('#main'));
+    }
 
     const selectors = [
       'button[data-testid="compose-btn-send"]',
