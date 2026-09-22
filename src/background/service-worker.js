@@ -429,7 +429,7 @@ async function generateSuggestion(payload) {
 
 const translationJobs = new Map();
 
-async function translateText({ accountId, chatId, text, direction, messageId = null }) {
+async function translateText({ accountId, chatId, text, direction, messageId = null, automatic = null }) {
   await assertChatAIEnabled(accountId, chatId);
   const translation = translationSettings(await getChatSettings(accountId, chatId));
   if (!translation.enabled) throw Object.assign(new Error('Ative o modo tradução nesta conversa.'), { code: 'TRANSLATION_DISABLED' });
@@ -450,7 +450,7 @@ async function translateText({ accountId, chatId, text, direction, messageId = n
     const result = sourceLanguage === targetLanguage ? { text, cached: true } : await callOpenAI({
       ...built, model: settings.model, maxOutputTokens: 2000,
       operation: `translation-${direction}`, accountId, chatId,
-      automatic: direction === 'incoming', translation
+      automatic: automatic == null ? direction === 'incoming' : Boolean(automatic), translation
     });
     // Keep both versions. An applied draft is not recorded as a sent message.
     const current = translationSettings(await getChatSettings(accountId, chatId));

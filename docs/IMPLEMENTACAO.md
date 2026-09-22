@@ -328,3 +328,98 @@ Alt+1..9        aplica a sugestão correspondente
 \`\`\`
 
 \`Ctrl+Enter\` e o botão **Aplicar e enviar** chamam exatamente a mesma transação.
+
+
+## Pipeline de sugestão com tradução
+
+Quando o modo tradução está ativo, tradução não é uma ação tardia de **Usar**, **Aplicar e enviar** ou **Ctrl+Enter**. Ela faz parte da própria geração da sugestão.
+
+Contrato de uma sugestão:
+
+```text
+draft
+  -> SUGGEST_GENERATE
+  -> promptText (sempre no idioma do usuário quando modo tradução está ativo)
+  -> TRANSLATE_TEXT outgoing
+  -> finalText (idioma do contato)
+  -> status=success
+```
+
+Sem tradução:
+
+```text
+promptText = resultado do prompt
+finalText  = promptText
+translationApplied = false
+```
+
+Com tradução:
+
+```text
+promptText = resultado do prompt no meu idioma
+finalText  = tradução para o idioma do contato
+translationApplied = true
+sourceLanguage = myLanguage
+targetLanguage = contactLanguage
+```
+
+Uma sugestão com tradução ativada **não pode** chegar ao estado `success` sem `finalText` traduzido válido.
+
+As ações que alteram o WhatsApp usam exclusivamente `finalText`:
+
+```text
+Usar              -> replaceText(finalText)
+Aplicar e enviar  -> replaceAndSend(finalText)
+Ctrl+Enter        -> mesma ação de Aplicar e enviar
+```
+
+Essas ações não chamam `TRANSLATE_TEXT` e nunca voltam para `promptText`.
+
+A interface mostra `finalText`, isto é, exatamente a mensagem que será enviada ao contato. Quando houver tradução, também mostra o idioma final.
+
+Estados possíveis durante a geração:
+
+```text
+queued
+loading
+translating
+success
+error
+```
+
+Se o prompt funcionar mas a tradução falhar:
+
+- `promptText` pode permanecer apenas para diagnóstico/retry;
+- `finalText` fica vazio;
+- o status passa para `error`;
+- **Usar**, **Aplicar e enviar** e **Ctrl+Enter** não podem enviar o item.
+
+A tradução é vinculada à conta, conversa e par de idiomas. Alterações em `translationEnabled`, `myLanguage`, `contactLanguage` ou demais configurações da conversa invalidam as sugestões existentes por meio do fluxo de `updateChatSettings()`.
+
+### Geração automática e consumo
+
+Sugestões após o debounce de 5 segundos usam:
+
+```text
+SUGGEST_GENERATE automatic=true
+TRANSLATE_TEXT   automatic=true
+```
+
+Assim, prompt e tradução respeitam os limites locais para chamadas automáticas.
+
+Ctrl+Espaço, prompt manual e retry manual usam `automatic=false`.
+
+### Tradução manual do rascunho
+
+O botão **Traduzir rascunho e aplicar** continua existindo como função separada. Ele usa `translateDraftAndApply()` e não participa do pipeline dos cards de sugestão.
+
+### Instrução do prompt no modo tradução
+
+`localizeSuggestion()` força o resultado do prompt para `myLanguage`. Depois, a extensão traduz esse resultado para `contactLanguage` antes de disponibilizar a sugestão para envio. Isso garante a ordem:
+
+```text
+texto digitado
+-> prompt no meu idioma
+-> tradução
+-> mensagem final no idioma do contato
+```

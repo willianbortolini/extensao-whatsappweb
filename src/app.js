@@ -4,7 +4,7 @@ import { WhatsAppDom } from './whatsapp/dom.js';
 import { WhatsAppComposerBridge, normalizeComposerText } from './whatsapp/composer-bridge.js';
 import { SidebarUI } from './ui.js';
 import { injectStyles } from './styles.js';
-import { LANGUAGES, translationSettings, translatedSuggestionForChat } from './ai/translation.js';
+import { LANGUAGES, translationSettings, finalSuggestionTextForChat } from './ai/translation.js';
 
 export class WhatsAppAIApp {
   constructor() {
@@ -70,14 +70,7 @@ export class WhatsAppAIApp {
       onRetrySuggestion: item => this.retrySuggestion(item),
       onUseSuggestion: item => this.useSuggestion(item),
       onSendSuggestion: item => this.applyAndSendSuggestion(item),
-      onTranslateDraft: () => {
-        const text = this.dom.readDraft();
-        if (!text.trim()) {
-          this.ui.setState({ translationStatus: 'Digite uma mensagem no campo do WhatsApp para traduzir o rascunho. Para mensagens recebidas, use “Traduzir balões do contato”.' });
-          return;
-        }
-        return this.useSuggestion({ text });
-      },
+      onTranslateDraft: () => this.translateDraftAndApply(),
       onRetryTranslations: () => this.retryBubbleTranslations(),
       onGenerateSummary: force => this.generateSummary(false, force),
       onEditSummary: value => this.editSummary(value),
@@ -448,6 +441,11 @@ export class WhatsAppAIApp {
       promptName: prompt.name,
       status: 'queued',
       text: '',
+      promptText: '',
+      finalText: '',
+      translationApplied: false,
+      sourceLanguage: null,
+      targetLanguage: null,
       error: '',
       draft,
       automatic: !forceNow
@@ -484,6 +482,11 @@ export class WhatsAppAIApp {
       promptName: prompt.name,
       status: 'queued',
       text: '',
+      promptText: '',
+      finalText: '',
+      translationApplied: false,
+      sourceLanguage: null,
+      targetLanguage: null,
       error: '',
       draft,
       automatic: false
@@ -497,7 +500,24 @@ export class WhatsAppAIApp {
     if (!item) return;
     const draft = this.dom.readDraft();
     const version = ++this.generationVersion;
-    const retry = { ...item, id: `${version}:${item.promptId}`, status: 'queued', error: '', text: '', draft };
+    const retry = {
+      ...item,
+      id: `${version}:${item.promptId}`,
+      status: 'queued',
+      error: '',
+      text: '',
+      promptText: '',
+      finalText: '',
+      translationApplied: false,
+      translationCached: false,
+      sourceLanguage: null,
+      targetLanguage: null,
+      translationAccountId: null,
+      translationChatId: null,
+      sendRequested: false,
+      draft,
+      automatic: false
+    };
     this.ui.setSuggestions([retry]);
     await this.generateSuggestionItem(retry, version);
   }
@@ -506,31 +526,105 @@ export class WhatsAppAIApp {
     if (!this.isChatAIEnabled()) return;
     if (version !== this.generationVersion) return;
 
+    const chat = this.chat;
+    const revision = this.chatSettingsRevision;
+    const draft = item.draft;
+    const translation = translationSettings(this.chatSettings);
+
     item.status = 'loading';
+    item.error = '';
+    item.promptText = '';
+    item.finalText = '';
+    item.translationApplied = false;
+    item.translationCached = false;
+    item.sourceLanguage = null;
+    item.targetLanguage = null;
+    item.translationAccountId = null;
+    item.translationChatId = null;
     this.ui.setSuggestions([...this.ui.suggestions]);
 
     const result = await sendRuntime('SUGGEST_GENERATE', {
-      accountId: this.account.id,
-      chatId: this.chat.whatsappChatId,
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId,
       promptId: item.promptId,
-      draft: item.draft,
-      contactName: this.chat.displayName,
+      draft,
+      contactName: chat.displayName,
       automatic: Boolean(item.automatic)
     });
 
-    if (version !== this.generationVersion) return;
-    if (this.dom.readDraft() !== item.draft) return;
-    if (!this.chat) return;
-
-    if (!result.ok) {
-      item.status = 'error';
-      item.error = this.userError(result);
-    } else {
-      item.status = 'success';
-      item.text = result.text;
-      item.cached = Boolean(result.cached);
+    if (
+      version !== this.generationVersion ||
+      this.chat !== chat ||
+      this.chatSettingsRevision !== revision ||
+      this.dom.readDraft() !== draft ||
+      !this.isChatAIEnabled()
+    ) {
+      return;
     }
 
+    if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) {
+      item.status = 'error';
+      item.error = result.ok ? 'A IA retornou uma sugestão vazia.' : this.userError(result);
+      this.ui.setSuggestions([...this.ui.suggestions]);
+      return;
+    }
+
+    item.promptText = result.text;
+    item.text = result.text;
+    item.cached = Boolean(result.cached);
+
+    if (!translation.enabled) {
+      item.finalText = item.promptText;
+      item.translationApplied = false;
+      item.status = 'success';
+      this.ui.setSuggestions([...this.ui.suggestions]);
+      return;
+    }
+
+    item.status = 'translating';
+    item.sourceLanguage = translation.myLanguage;
+    item.targetLanguage = translation.contactLanguage;
+    item.translationAccountId = chat.accountId;
+    item.translationChatId = chat.whatsappChatId;
+    this.ui.setSuggestions([...this.ui.suggestions]);
+
+    const translated = await sendRuntime('TRANSLATE_TEXT', {
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId,
+      text: item.promptText,
+      direction: 'outgoing',
+      automatic: Boolean(item.automatic)
+    });
+
+    const currentTranslation = translationSettings(this.chatSettings);
+    if (
+      version !== this.generationVersion ||
+      this.chat !== chat ||
+      this.chatSettingsRevision !== revision ||
+      this.dom.readDraft() !== draft ||
+      !this.isChatAIEnabled() ||
+      !currentTranslation.enabled ||
+      currentTranslation.myLanguage !== translation.myLanguage ||
+      currentTranslation.contactLanguage !== translation.contactLanguage
+    ) {
+      return;
+    }
+
+    if (!translated.ok || typeof translated.text !== 'string' || !translated.text.trim()) {
+      item.status = 'error';
+      item.finalText = '';
+      item.translationApplied = false;
+      item.error = translated.ok
+        ? `Não foi possível traduzir a sugestão para ${LANGUAGES[translation.contactLanguage]}: a tradução retornou vazia.`
+        : `Não foi possível traduzir a sugestão para ${LANGUAGES[translation.contactLanguage]}. ${this.userError(translated)}`;
+      this.ui.setSuggestions([...this.ui.suggestions]);
+      return;
+    }
+
+    item.finalText = translated.text;
+    item.translationApplied = true;
+    item.translationCached = Boolean(translated.cached);
+    item.status = 'success';
     this.ui.setSuggestions([...this.ui.suggestions]);
   }
 
@@ -575,105 +669,116 @@ export class WhatsAppAIApp {
   }
 
   async prepareSuggestionAction(item) {
-    if (!item?.text?.trim() || !this.isChatAIEnabled() || this.applyingTranslation) return null;
+    if (!this.isChatAIEnabled() || this.applyingTranslation) return null;
 
     const chat = this.chat;
     const revision = this.chatSettingsRevision;
-    if (!chat) return null;
+    if (!chat || item?.status !== 'success') return null;
     if (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId) return null;
 
-    let text = item.text;
-    const translation = translationSettings(this.chatSettings);
-    if (translation.enabled) {
-      // A translated suggestion previously applied with "Traduzir e aplicar"
-      // is the text the user has already reviewed. Reuse that exact version
-      // for "Aplicar e enviar"/Ctrl+Enter instead of returning to item.text.
-      const approvedTranslation = translatedSuggestionForChat(item, this.chatSettings, chat);
-      if (approvedTranslation) {
-        text = approvedTranslation;
-      } else {
-        const draft = this.dom.readDraft();
-        this.applyingTranslation = true;
-        this.cancelDebounce();
-        this.ui.setState({ applyingTranslation: true, translationStatus: 'Traduzindo para o idioma do contato…' });
-        try {
-          const result = await sendRuntime('TRANSLATE_TEXT', {
-            accountId: chat.accountId,
-            chatId: chat.whatsappChatId,
-            text: item.text,
-            direction: 'outgoing'
-          });
-
-          const currentTranslation = translationSettings(this.chatSettings);
-          if (
-            this.chat !== chat ||
-            this.chatSettingsRevision !== revision ||
-            !this.isChatAIEnabled() ||
-            !currentTranslation.enabled ||
-            currentTranslation.myLanguage !== translation.myLanguage ||
-            currentTranslation.contactLanguage !== translation.contactLanguage
-          ) {
-            this.suggestionPreparationError = 'A conversa ou os idiomas mudaram durante a tradução. Nada foi enviado.';
-            this.ui.setState({ sendStatus: this.suggestionPreparationError });
-            return null;
-          }
-
-          if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) {
-            const reason = result.ok ? 'A tradução retornou um texto vazio.' : this.userError(result);
-            this.suggestionPreparationError = 'Não foi possível traduzir a sugestão. Nada foi enviado. ' + reason;
-            this.ui.setState({
-              translationStatus: this.suggestionPreparationError,
-              sendStatus: this.suggestionPreparationError
-            });
-            return null;
-          }
-
-          if (this.dom.readDraft() !== draft) {
-            this.suggestionPreparationError = 'Você alterou o rascunho durante a tradução. Nada foi enviado.';
-            this.ui.setState({
-              translationStatus: this.suggestionPreparationError,
-              sendStatus: this.suggestionPreparationError
-            });
-            return null;
-          }
-
-          text = result.text;
-          // Associate the approved translation with the source suggestion,
-          // account, conversation and language pair. It cannot be reused in
-          // another chat or after the source text / languages change.
-          Object.assign(item, {
-            translatedText: text,
-            translationSourceText: item.text,
-            translationAccountId: chat.accountId,
-            translationChatId: chat.whatsappChatId,
-            translationMyLanguage: translation.myLanguage,
-            translationContactLanguage: translation.contactLanguage
-          });
-          if (this.ui?.suggestions?.includes(item)) {
-            this.ui.setSuggestions([...this.ui.suggestions]);
-          }
-          this.ui.setState({ translationStatus: 'Tradução pronta para aplicar e enviar.' });
-        } finally {
-          this.applyingTranslation = false;
-          this.ui.setState({ applyingTranslation: false });
-        }
-      }
-    }
-
-    if (
-      this.chat !== chat ||
-      this.chatSettingsRevision !== revision ||
-      !this.isChatAIEnabled() ||
-      (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId)
-    ) {
+    const text = finalSuggestionTextForChat(item, this.chatSettings, chat);
+    if (!text) {
+      this.suggestionPreparationError = translationSettings(this.chatSettings).enabled
+        ? 'A sugestão não possui uma tradução válida para o idioma atual do contato. Gere a sugestão novamente.'
+        : 'A sugestão não possui uma mensagem final válida. Gere a sugestão novamente.';
+      this.ui.setState({ sendStatus: this.suggestionPreparationError });
       return null;
     }
 
     return { text, chat, revision };
   }
 
+  async translateDraftAndApply() {
+    if (!this.isChatAIEnabled() || this.applyingTranslation || this.sendingSuggestion) return false;
+
+    const text = this.dom.readDraft();
+    if (!text.trim()) {
+      this.ui.setState({ translationStatus: 'Digite uma mensagem no campo do WhatsApp para traduzir o rascunho. Para mensagens recebidas, use “Traduzir balões do contato”.' });
+      return false;
+    }
+
+    const chat = this.chat;
+    const revision = this.chatSettingsRevision;
+    const translation = translationSettings(this.chatSettings);
+    if (!translation.enabled) {
+      this.ui.setState({ translationStatus: 'Ative o modo tradução nesta conversa.' });
+      return false;
+    }
+
+    this.applyingTranslation = true;
+    this.cancelDebounce();
+    this.ui.setState({ applyingTranslation: true, translationStatus: `Traduzindo para ${LANGUAGES[translation.contactLanguage]}…` });
+
+    try {
+      const result = await sendRuntime('TRANSLATE_TEXT', {
+        accountId: chat.accountId,
+        chatId: chat.whatsappChatId,
+        text,
+        direction: 'outgoing',
+        automatic: false
+      });
+
+      const currentTranslation = translationSettings(this.chatSettings);
+      if (
+        this.chat !== chat ||
+        this.chatSettingsRevision !== revision ||
+        !this.isChatAIEnabled() ||
+        this.dom.readDraft() !== text ||
+        !currentTranslation.enabled ||
+        currentTranslation.myLanguage !== translation.myLanguage ||
+        currentTranslation.contactLanguage !== translation.contactLanguage
+      ) {
+        this.ui.setState({ translationStatus: 'A conversa, o rascunho ou os idiomas mudaram durante a tradução. Tente novamente.' });
+        return false;
+      }
+
+      if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) {
+        this.ui.setState({
+          translationStatus: result.ok
+            ? 'A tradução retornou um texto vazio.'
+            : this.userError(result)
+        });
+        return false;
+      }
+
+      this.replacingDraft = true;
+      let applied;
+      try {
+        applied = await this.composerBridge.replaceText(result.text, {
+          chatId: chat.whatsappChatId
+        });
+      } finally {
+        this.replacingDraft = false;
+      }
+
+      if (!applied?.ok) {
+        this.ui.setState({ translationStatus: this.composerFailureMessage(applied, 'aplicar a tradução') });
+        return false;
+      }
+
+      const actualDraft = this.dom.readDraft();
+      if (normalizeComposerText(actualDraft) !== normalizeComposerText(result.text)) {
+        this.ui.setState({ translationStatus: 'O WhatsApp não confirmou o texto traduzido no campo.' });
+        return false;
+      }
+
+      this.currentDraft = actualDraft;
+      this.suppressedDraft = actualDraft;
+      this.draftVersion += 1;
+      this.invalidateGenerations();
+      this.cancelDebounce();
+      this.ui.clearSuggestions();
+      this.ui.setState({ translationStatus: 'Rascunho traduzido e aplicado.' });
+      return true;
+    } finally {
+      this.applyingTranslation = false;
+      this.ui.setState({ applyingTranslation: false });
+    }
+  }
+
   async useSuggestion(item) {
-    if (this.sendingSuggestion) return false;
+    if (this.sendingSuggestion || item?.status !== 'success') return false;
+    this.suggestionPreparationError = '';
     const prepared = await this.prepareSuggestionAction(item);
     if (!prepared) return false;
 
@@ -719,7 +824,7 @@ export class WhatsAppAIApp {
   }
 
   async applyAndSendSuggestion(item) {
-    if (!item?.text?.trim() || !this.isChatAIEnabled() || this.sendingSuggestion || this.applyingTranslation || item.sendRequested) return false;
+    if (item?.status !== 'success' || !item?.finalText?.trim() || !this.isChatAIEnabled() || this.sendingSuggestion || this.applyingTranslation || item.sendRequested) return false;
 
     this.sendingSuggestion = true;
     this.suggestionPreparationError = '';
@@ -1030,7 +1135,7 @@ export class WhatsAppAIApp {
     }
 
     if (event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
-      const selected = this.ui.getSelectedSuggestion() || this.ui.suggestions.find(item => item.status === 'success' && item.text);
+      const selected = this.ui.getSelectedSuggestion() || this.ui.suggestions.find(item => item.status === 'success' && item.finalText);
       if (selected) {
         event.preventDefault();
         event.stopImmediatePropagation();

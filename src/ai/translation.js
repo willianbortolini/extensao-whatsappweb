@@ -27,28 +27,36 @@ export function localizeSuggestion(built, settings) {
   if (!translation.enabled) return built;
   return {
     ...built,
-    instructions: `${built.instructions}\nModo tradução: escreva o resultado exclusivamente em ${LANGUAGES[translation.myLanguage]}, mesmo que o prompt peça outro idioma. O usuário revisará este texto; a tradução para o contato ocorrerá somente ao aplicar.`
+    instructions: `${built.instructions}\nModo tradução: escreva o resultado exclusivamente em ${LANGUAGES[translation.myLanguage]}, mesmo que o prompt peça outro idioma. A extensão traduzirá esse resultado para ${LANGUAGES[translation.contactLanguage]} antes de disponibilizá-lo para envio.`
   };
 }
 
 /**
- * Return the version already translated and approved for this precise
- * conversation/language pair. Never treat the original suggestion as translated.
+ * Return the only text that actions are allowed to put in WhatsApp.
+ * With translation enabled, success requires a finalized translation for the
+ * exact account/chat/language pair. With translation disabled, translated
+ * stale suggestions are rejected.
  */
-export function translatedSuggestionForChat(item, settings, chat) {
+export function finalSuggestionTextForChat(item, settings, chat) {
+  if (!chat || item?.status !== 'success' || typeof item?.finalText !== 'string' || !item.finalText.trim()) {
+    return '';
+  }
+
   const translation = translationSettings(settings);
+  if (!translation.enabled) {
+    if (item.translationApplied) return '';
+    return item.finalText;
+  }
+
   if (
-    !translation.enabled ||
-    !chat ||
-    typeof item?.translatedText !== 'string' ||
-    !item.translatedText.trim() ||
-    item.translationSourceText !== item.text ||
+    item.translationApplied !== true ||
     item.translationAccountId !== chat.accountId ||
     item.translationChatId !== chat.whatsappChatId ||
-    item.translationMyLanguage !== translation.myLanguage ||
-    item.translationContactLanguage !== translation.contactLanguage
+    item.sourceLanguage !== translation.myLanguage ||
+    item.targetLanguage !== translation.contactLanguage
   ) {
     return '';
   }
-  return item.translatedText;
+
+  return item.finalText;
 }

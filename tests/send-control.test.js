@@ -10,8 +10,8 @@ function keyboardFixture() {
     body: { classList: { contains: () => false } }
   };
 
-  const first = { text: 'Primeira', status: 'success' };
-  const second = { text: 'Segunda', status: 'success' };
+  const first = { promptText: 'Primeira', finalText: 'First', status: 'success' };
+  const second = { promptText: 'Segunda', finalText: 'Second', status: 'success' };
   let selected = second;
   const sent = [];
   const generated = [];

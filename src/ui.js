@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { LANGUAGES, translationSettings, translatedSuggestionForChat } from './ai/translation.js';
+import { LANGUAGES, translationSettings, finalSuggestionTextForChat } from './ai/translation.js';
 
 function el(tag, options = {}, children = []) {
   const node = document.createElement(tag);
@@ -168,9 +168,16 @@ export class SidebarUI {
     } else {
       this.suggestions.forEach((item, index) => {
         const card = el('div', { className: `wai-suggestion${index === this.selectedIndex ? ' selected' : ''}` });
-        const status = item.status === 'loading' || item.status === 'queued'
-          ? el('span', { className: 'wai-status', text: item.status === 'queued' ? 'fila' : 'gerando' })
-          : item.cached
+        const status = ['loading', 'queued', 'translating'].includes(item.status)
+          ? el('span', {
+              className: 'wai-status',
+              text: item.status === 'queued'
+                ? 'fila'
+                : item.status === 'translating'
+                  ? 'traduzindo'
+                  : 'gerando'
+            })
+          : item.cached && (!item.translationApplied || item.translationCached)
             ? el('span', { className: 'wai-status', text: 'cache' })
             : null;
         card.append(el('div', { className: 'wai-suggestion-head' }, [
@@ -178,10 +185,14 @@ export class SidebarUI {
           status
         ]));
 
-        if (item.status === 'loading' || item.status === 'queued') {
+        if (item.status === 'loading' || item.status === 'queued' || item.status === 'translating') {
           card.append(el('div', { className: 'wai-loading' }, [
             el('span', { className: 'wai-spinner' }),
-            el('span', { text: 'Gerando sugestão…' })
+            el('span', {
+              text: item.status === 'translating'
+                ? `Traduzindo para ${LANGUAGES[item.targetLanguage] || 'o idioma do contato'}…`
+                : 'Aplicando prompt…'
+            })
           ]));
         } else if (item.status === 'error') {
           card.append(
@@ -191,13 +202,18 @@ export class SidebarUI {
             ])
           );
         } else {
-          const translatedText = translatedSuggestionForChat(item, this.chatSettings, this.chat);
+          const finalText = finalSuggestionTextForChat(item, this.chatSettings, this.chat);
           card.append(
-            translatedText ? el('div', { className: 'wai-help', text: 'Tradução pronta para envio:' }) : null,
-            el('div', { className: 'wai-suggestion-text', text: translatedText || item.text || '' }),
+            item.translationApplied
+              ? el('div', {
+                  className: 'wai-help',
+                  text: `Mensagem final • ${LANGUAGES[item.targetLanguage] || 'idioma do contato'}`
+                })
+              : null,
+            el('div', { className: 'wai-suggestion-text', text: finalText || item.finalText || '' }),
             el('div', { className: 'wai-suggestion-actions' }, [
-              el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : translatedText ? 'Usar tradução' : translationSettings(this.chatSettings).enabled ? 'Traduzir e aplicar' : 'Usar', disabled: this.applyingTranslation || this.sendingSuggestion, onClick: () => this.handlers.onUseSuggestion?.(item) }),
-              el('button', { className: 'wai-btn small', type: 'button', text: this.sendingSuggestion ? 'Enviando…' : 'Aplicar e enviar', title: 'Substitui o rascunho pela sugestão e envia a mensagem ao contato', disabled: this.applyingTranslation || this.sendingSuggestion || item.sendRequested, onClick: () => this.handlers.onSendSuggestion?.(item) })
+              el('button', { className: 'wai-btn secondary small', type: 'button', text: 'Usar', disabled: this.applyingTranslation || this.sendingSuggestion || !finalText, onClick: () => this.handlers.onUseSuggestion?.(item) }),
+              el('button', { className: 'wai-btn small', type: 'button', text: this.sendingSuggestion ? 'Enviando…' : 'Aplicar e enviar', title: 'Substitui o rascunho pela mensagem final e envia ao contato', disabled: this.applyingTranslation || this.sendingSuggestion || item.sendRequested || !finalText, onClick: () => this.handlers.onSendSuggestion?.(item) })
             ])
           );
         }
@@ -446,7 +462,7 @@ export class SidebarUI {
   moveSelection(delta) {
     const usable = this.suggestions
       .map((s, index) => ({ s, index }))
-      .filter(x => x.s.status === 'success' && x.s.text);
+      .filter(x => x.s.status === 'success' && x.s.finalText);
 
     if (!usable.length) {
       this.selectedIndex = -1;
@@ -467,7 +483,7 @@ export class SidebarUI {
   getSelectedSuggestion() {
     if (this.selectedIndex < 0) return null;
     const item = this.suggestions[this.selectedIndex];
-    return item?.status === 'success' ? item : null;
+    return item?.status === 'success' && item.finalText ? item : null;
   }
 
   clearSelection() {

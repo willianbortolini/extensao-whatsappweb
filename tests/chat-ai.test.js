@@ -16,6 +16,7 @@ function worker() {
   const calls = [];
   const pending = [];
   const translations = new Map();
+  const usageRecords = [];
   const storage = { get: async () => ({ wai_installation_id: 'test', wai_last_cleanup: Date.now() }), set: async () => {}, setAccessLevel: async () => {} };
   const context = vm.createContext({
     CONFIG, DEFAULT_SETTINGS, AbortController, setTimeout, clearTimeout,
@@ -25,7 +26,7 @@ function worker() {
     } },
     ensureDefaults: async () => {},
     getChatSettings: async (account, chat) => preferences.get(JSON.stringify([account, chat])),
-    addUsage: async () => {},
+    addUsage: async value => usageRecords.push(value),
     getTranslation: async id => translations.get(id),
     saveTranslation: async value => translations.set(value.id, value),
     fetch: async (_url, options) => {
@@ -38,7 +39,7 @@ function worker() {
     getApiKey = async () => ({ key: 'test-key' });
     globalThis.api = { callOpenAI, generateSuggestion, generateSummary, translateText };
   `, context);
-  return { ...context.api, calls, pending, translations,
+  return { ...context.api, calls, pending, translations, usageRecords,
     configure: (value) => preferences.set(JSON.stringify(['a', 'c']), value),
     set: (account, chat, value) => preferences.set(JSON.stringify([account, chat]), { aiEnabled: value }) };
 }
@@ -89,6 +90,42 @@ test('saída usa idioma do contato; resposta parcial não é armazenada', async 
   assert.equal(w.translations.size, 0);
 });
 
+test('tradução de sugestão automática é contabilizada como automática', async () => {
+  const w = worker();
+  w.configure(enabledTranslation);
+  const outgoing = w.translateText({
+    ...incoming,
+    direction: 'outgoing',
+    text: 'Bom dia',
+    automatic: true
+  });
+  await waitForCalls(w, 1);
+  w.pending.shift()({
+    output_text: 'Good morning',
+    status: 'completed',
+    usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 }
+  });
+  await outgoing;
+  assert.equal(w.usageRecords.length, 1);
+  assert.equal(w.usageRecords[0].automatic, true);
+  assert.equal(w.usageRecords[0].operation, 'translation-outgoing');
+});
+
+test('tradução outgoing manual continua contabilizada como manual', async () => {
+  const w = worker();
+  w.configure(enabledTranslation);
+  const outgoing = w.translateText({
+    ...incoming,
+    direction: 'outgoing',
+    text: 'Bom dia'
+  });
+  await waitForCalls(w, 1);
+  w.pending.shift()({ output_text: 'Good morning', status: 'completed' });
+  await outgoing;
+  assert.equal(w.usageRecords.length, 1);
+  assert.equal(w.usageRecords[0].automatic, false);
+});
+
 test('desativar modo impede chamada; mudar idioma na fila cancela tradução pendente', async () => {
   const w = worker();
   w.set('a', 'c', true);
@@ -110,6 +147,7 @@ test('sugestões ficam no meu idioma; modo desligado mantém o prompt existente'
   const built = { instructions: 'Regras', input: 'Traduza para espanhol' };
   assert.equal(localizeSuggestion(built, {}).instructions, 'Regras');
   assert.match(localizeSuggestion(built, enabledTranslation).instructions, /exclusivamente em Português/);
+  assert.match(localizeSuggestion(built, enabledTranslation).instructions, /traduzirá esse resultado para Inglês/);
   assert.equal(translationSettings({}).enabled, false);
 });
 

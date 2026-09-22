@@ -179,3 +179,63 @@ tests/send-control.test.js
 tests/send-suggestion.test.js
 tests/translation-apply.test.js
 \`\`\`
+
+
+## Sugestões com tradução — matriz obrigatória
+
+### Tradução desligada
+
+- digitar `teste envio`;
+- o prompt retorna `Mensagem de teste.`;
+- `promptText = "Mensagem de teste."`;
+- `finalText = "Mensagem de teste."`;
+- **Usar**, **Aplicar e enviar** e **Ctrl+Enter** usam esse `finalText`.
+
+### Tradução ligada (pt-BR -> en)
+
+- digitar `teste envio`;
+- prompt retorna `Esta é uma mensagem de teste.`;
+- antes do card ficar pronto, executar `TRANSLATE_TEXT` outgoing;
+- tradução retorna `This is a test message.`;
+- card mostra `This is a test message.`;
+- `promptText` continua sendo `Esta é uma mensagem de teste.`;
+- `finalText = "This is a test message."`;
+- **Usar** escreve somente `finalText`;
+- **Aplicar e enviar** envia somente `finalText`;
+- **Ctrl+Enter** envia somente `finalText`;
+- nenhuma dessas três ações faz uma tradução tardia.
+
+### Estados
+
+- enquanto o prompt roda: `loading`;
+- depois do prompt e durante tradução: `translating`;
+- apenas depois da tradução válida: `success`;
+- tradução vazia ou com erro: `error` e `finalText=""`.
+
+### Falhas obrigatórias
+
+- tradução falhou: não enviar `promptText`;
+- rascunho mudou enquanto prompt rodava: descartar resultado;
+- rascunho mudou enquanto tradução rodava: descartar tradução;
+- conversa mudou: descartar resultado;
+- idioma mudou: sugestão anterior deixa de ser válida;
+- tradução desligada após uma sugestão traduzida: não reutilizar `finalText` antigo.
+
+### Geração automática
+
+- após 5 segundos: prompt automático + tradução automática, uma vez por rascunho;
+- `TRANSLATE_TEXT` recebe `automatic=true`;
+- não repetir enquanto o rascunho não mudar.
+
+### Geração manual
+
+- Ctrl+Espaço executa prompt + tradução imediatamente;
+- prompt manual executa o mesmo pipeline;
+- retry manual limpa `promptText`, `finalText` e metadados antigos antes de refazer;
+- chamadas manuais de tradução recebem `automatic=false`.
+
+### Tradução manual do rascunho
+
+- **Traduzir rascunho e aplicar** continua funcionando independentemente dos cards;
+- deve traduzir o rascunho atual e aplicar pelo composer bridge;
+- não deve transformar esse rascunho em card de sugestão pronto para envio.
