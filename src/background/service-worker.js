@@ -1,8 +1,10 @@
-import { CONFIG, DEFAULT_SETTINGS } from '../config.js';
+import { CONFIG, DEFAULT_SETTINGS, PROMPT_SCOPE } from '../config.js';
 import {
   ensureDefaults,
   listPrompts,
+  listPromptsForChat,
   getPrompt,
+  promptAvailableForChat,
   savePrompt,
   deletePrompt,
   upsertAccount,
@@ -369,8 +371,14 @@ async function generateSuggestion(payload) {
   assertSize(draft, CONFIG.maxDraftChars, 'draft');
 
   const prompt = await getPrompt(promptId);
-  if (!prompt || !prompt.enabled) {
-    throw Object.assign(new Error('Prompt não encontrado ou desabilitado.'), { code: 'PROMPT_UNAVAILABLE' });
+  if (!prompt) {
+    throw Object.assign(new Error('Prompt não encontrado.'), { code: 'PROMPT_UNAVAILABLE' });
+  }
+  if (!promptAvailableForChat(prompt, accountId, chatId)) {
+    throw Object.assign(new Error('Este prompt pertence a outra conversa.'), { code: 'PROMPT_NOT_AVAILABLE_FOR_CHAT' });
+  }
+  if (!prompt.enabled) {
+    throw Object.assign(new Error('Prompt desabilitado.'), { code: 'PROMPT_UNAVAILABLE' });
   }
 
   let summary = prompt.includeSummary ? await getSummary(accountId, chatId) : null;
@@ -435,8 +443,14 @@ async function generateSuggestedMessage({ accountId, chatId, promptId, forceNew 
   assertSize(promptId, 500, 'promptId');
 
   const prompt = await getPrompt(promptId);
-  if (!prompt || !prompt.enabled) {
-    throw Object.assign(new Error('Prompt não encontrado ou desabilitado.'), { code: 'PROMPT_UNAVAILABLE' });
+  if (!prompt) {
+    throw Object.assign(new Error('Prompt não encontrado.'), { code: 'PROMPT_UNAVAILABLE' });
+  }
+  if (!promptAvailableForChat(prompt, accountId, chatId)) {
+    throw Object.assign(new Error('Este prompt pertence a outra conversa.'), { code: 'PROMPT_NOT_AVAILABLE_FOR_CHAT' });
+  }
+  if (!prompt.enabled) {
+    throw Object.assign(new Error('Prompt desabilitado.'), { code: 'PROMPT_UNAVAILABLE' });
   }
 
   const summary = await getSummary(accountId, chatId);
@@ -629,15 +643,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'PROMPT_LIST':
         return { prompts: await listPrompts() };
 
+      case 'PROMPT_LIST_FOR_CHAT': {
+        assertSize(payload.accountId, 500, 'accountId');
+        assertSize(payload.chatId, 500, 'chatId');
+        return { prompts: await listPromptsForChat(payload.accountId, payload.chatId) };
+      }
+
       case 'PROMPT_SAVE': {
         const normalized = normalizePromptInput(payload.prompt);
-        if (!normalized.name || !normalized.instructions) throw Object.assign(new Error('Nome e instruções são obrigatórios.'), { code: 'INVALID_PROMPT' });
+        if (!normalized.name || !normalized.instructions) {
+          throw Object.assign(new Error('Nome e instruções são obrigatórios.'), { code: 'INVALID_PROMPT' });
+        }
+
+        const existing = normalized.id ? await getPrompt(normalized.id) : null;
+        const requestedScope = normalized.scope === PROMPT_SCOPE.CHAT ? PROMPT_SCOPE.CHAT : PROMPT_SCOPE.GLOBAL;
+        const existingScope = existing?.scope || PROMPT_SCOPE.GLOBAL;
+        if (existing && existingScope !== requestedScope) {
+          throw Object.assign(new Error('O escopo de um prompt existente não pode ser alterado. Duplique o prompt para esta conversa.'), {
+            code: 'PROMPT_SCOPE_IMMUTABLE'
+          });
+        }
+
+        if (requestedScope === PROMPT_SCOPE.CHAT) {
+          assertSize(normalized.accountId, 500, 'accountId');
+          assertSize(normalized.chatId, 500, 'chatId');
+          if (!normalized.accountId || !normalized.chatId) {
+            throw Object.assign(new Error('Não foi possível identificar a conversa deste prompt.'), { code: 'INVALID_PROMPT_SCOPE' });
+          }
+          const chat = await getChat(normalized.accountId, normalized.chatId);
+          if (!chat) {
+            throw Object.assign(new Error('A conversa vinculada ao prompt não foi encontrada no armazenamento local.'), {
+              code: 'PROMPT_CHAT_NOT_FOUND'
+            });
+          }
+          normalized.chatDisplayName = String(normalized.chatDisplayName || chat.displayName || '').slice(0, 250);
+        } else {
+          normalized.scope = PROMPT_SCOPE.GLOBAL;
+          normalized.accountId = null;
+          normalized.chatId = null;
+          normalized.chatDisplayName = null;
+        }
+
         return { prompt: await savePrompt(normalized) };
       }
 
-      case 'PROMPT_DELETE':
-        await deletePrompt(String(payload.id || ''));
+      case 'PROMPT_DELETE': {
+        const id = String(payload.id || '');
+        const prompt = await getPrompt(id);
+        if (!prompt) return { deleted: true };
+        if (prompt.scope === PROMPT_SCOPE.CHAT && !promptAvailableForChat(prompt, payload.accountId, payload.chatId)) {
+          throw Object.assign(new Error('Este prompt pertence a outra conversa.'), { code: 'PROMPT_NOT_AVAILABLE_FOR_CHAT' });
+        }
+        await deletePrompt(id);
         return { deleted: true };
+      }
 
       case 'ACCOUNT_UPSERT':
         await upsertAccount(payload.account);

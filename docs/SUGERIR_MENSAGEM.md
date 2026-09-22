@@ -89,3 +89,19 @@ Aplicar e enviar -> replaceAndSend(finalText)
 ## Consumo
 
 Não existe polling, debounce ou geração automática. Cada geração é iniciada explicitamente pelo usuário. **Gerar outra** força uma nova geração de prompt; traduções ainda podem reutilizar o cache de tradução quando o texto resultante for idêntico.
+
+
+## Prompts específicos por conversa
+
+O seletor de **Sugerir mensagem** aceita prompts globais e prompts específicos da conversa.
+
+Exemplo em João:
+
+```text
+Continuação da conversa · Global
+Follow-up João · Esta conversa · João
+```
+
+Ao abrir Maria, `Follow-up João` deixa de existir na lista.
+
+Essa filtragem não é apenas visual: `SUGGEST_MESSAGE_GENERATE` valida novamente o escopo no service worker antes de chamar a OpenAI.

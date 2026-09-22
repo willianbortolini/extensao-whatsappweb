@@ -21,6 +21,11 @@ export const CONFIG = Object.freeze({
 
 export const DEFAULT_SUGGEST_MESSAGE_PROMPT_ID = 'default-suggest-message-v1';
 
+export const PROMPT_SCOPE = Object.freeze({
+  GLOBAL: 'global',
+  CHAT: 'chat'
+});
+
 export const DEFAULT_SETTINGS = Object.freeze({
   sidebarOpen: true,
   aiPaused: false,
@@ -50,6 +55,10 @@ export const DEFAULT_PROMPTS = Object.freeze([
   {
     id: 'template-improve',
     name: 'Melhorar',
+    scope: PROMPT_SCOPE.GLOBAL,
+    accountId: null,
+    chatId: null,
+    chatDisplayName: null,
     instructions: 'Melhore a clareza, a gramática e a naturalidade da mensagem, preservando a intenção, os fatos e o nível de formalidade. Retorne somente a mensagem final.',
     enabled: true,
     autoRun: true,
@@ -63,6 +72,10 @@ export const DEFAULT_PROMPTS = Object.freeze([
   {
     id: 'template-english',
     name: 'Inglês',
+    scope: PROMPT_SCOPE.GLOBAL,
+    accountId: null,
+    chatId: null,
+    chatDisplayName: null,
     instructions: 'Traduza a mensagem para inglês natural e adequado para WhatsApp. Preserve significado, nomes, datas, números e valores. Retorne somente a tradução.',
     enabled: false,
     autoRun: false,
@@ -76,6 +89,10 @@ export const DEFAULT_PROMPTS = Object.freeze([
   {
     id: 'template-spanish',
     name: 'Espanhol',
+    scope: PROMPT_SCOPE.GLOBAL,
+    accountId: null,
+    chatId: null,
+    chatDisplayName: null,
     instructions: 'Traduza a mensagem para espanhol natural e adequado para WhatsApp. Preserve significado, nomes, datas, números e valores. Retorne somente a tradução.',
     enabled: false,
     autoRun: false,
@@ -89,6 +106,10 @@ export const DEFAULT_PROMPTS = Object.freeze([
   {
     id: DEFAULT_SUGGEST_MESSAGE_PROMPT_ID,
     name: 'Continuação da conversa',
+    scope: PROMPT_SCOPE.GLOBAL,
+    accountId: null,
+    chatId: null,
+    chatDisplayName: null,
     instructions: 'Com base no resumo fornecido, escreva uma única mensagem que possa ser enviada agora para dar continuidade natural à conversa. Considere o assunto tratado, os acordos já realizados, dúvidas, interesses e pendências existentes. Quando houver uma ação pendente, encaminhe naturalmente o próximo passo. A mensagem deve ser clara, cordial e adequada para WhatsApp. Não invente nomes, preços, datas, promessas, disponibilidade, condições ou decisões ausentes do contexto. Não trate algo pendente como confirmado. Não explique seu raciocínio. Retorne somente a mensagem pronta para envio.',
     enabled: true,
     autoRun: false,

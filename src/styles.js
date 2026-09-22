@@ -60,6 +60,10 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-prompt-row:last-child{border-bottom:0}
 .wai-prompt-name{flex:1;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wai-prompt-tag{font-size:10px;color:var(--wai-muted)}
+.wai-prompt-tag.chat{color:#3158a6;font-weight:700}
+.wai-prompt-group-title{margin:10px 0 5px;font-weight:700}
+.wai-prompt-create-actions{flex-wrap:wrap}
+.wai-prompt-scope-note{margin:0 0 10px;padding:8px 10px;border-radius:8px;background:#f5f7f8;color:#54656f;font-size:12px;line-height:1.4}
 .wai-footer{padding:9px 12px;border-top:1px solid var(--wai-border);font-size:10px;color:var(--wai-muted);background:#fff;display:flex;justify-content:space-between;gap:8px}
 #wai-launcher{position:fixed;right:13px;top:50%;transform:translateY(-50%);z-index:9997;width:42px;height:42px;border:0;border-radius:50%;background:var(--wai-brand-dark);color:#fff;font-weight:800;cursor:pointer;box-shadow:var(--wai-shadow)}
 .wai-modal-backdrop{position:absolute;inset:0;z-index:10;background:rgba(14,25,20,.35);display:flex;align-items:center;justify-content:center;padding:16px}

@@ -1,4 +1,4 @@
-import { CONFIG, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID } from './config.js';
+import { CONFIG, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID, PROMPT_SCOPE } from './config.js';
 import { sendRuntime, openOptions } from './runtime.js';
 import { WhatsAppDom } from './whatsapp/dom.js';
 import { WhatsAppComposerBridge, normalizeComposerText } from './whatsapp/composer-bridge.js';
@@ -19,6 +19,7 @@ export class WhatsAppAIApp {
 
     this.settings = null;
     this.keyStatus = null;
+    this.allPrompts = [];
     this.prompts = [];
     this.summary = null;
     this.suggestedMessage = null;
@@ -64,7 +65,8 @@ export class WhatsAppAIApp {
     this.installationId = init.installationId;
     this.settings = init.settings;
     this.keyStatus = init.keyStatus;
-    this.prompts = init.prompts || [];
+    this.allPrompts = init.prompts || [];
+    this.prompts = this.allPrompts.filter(prompt => (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL);
     this.chooseSuggestedMessagePrompt();
 
     this.ui = new SidebarUI({
@@ -89,7 +91,8 @@ export class WhatsAppAIApp {
       onClearChatHistory: () => this.clearCurrentChatHistory(),
       onPromptSave: prompt => this.savePrompt(prompt),
       onPromptDelete: prompt => this.deletePrompt(prompt),
-      onPromptToggle: (prompt, patch) => this.savePrompt({ ...prompt, ...patch })
+      onPromptToggle: (prompt, patch) => this.savePrompt({ ...prompt, ...patch }),
+      onPromptDuplicateToChat: prompt => this.duplicatePromptToCurrentChat(prompt)
     });
 
     this.ui.mount();
@@ -163,11 +166,7 @@ export class WhatsAppAIApp {
     this.settings = result.settings;
     this.keyStatus = result.keyStatus;
 
-    const prompts = await sendRuntime('PROMPT_LIST');
-    if (prompts.ok) {
-      this.prompts = prompts.prompts || this.prompts;
-      this.chooseSuggestedMessagePrompt();
-    }
+    await this.reloadPrompts(false);
 
     this.ui?.setState({
       settings: this.settings,
@@ -262,6 +261,7 @@ export class WhatsAppAIApp {
     this.chat = null;
     this.summary = null;
     this.chatSettings = null;
+    this.prompts = this.allPrompts.filter(prompt => (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL);
     this.ui?.clearSuggestions();
     this.clearSuggestedMessage('');
 
@@ -287,9 +287,17 @@ export class WhatsAppAIApp {
         this.chat = null;
         this.summary = null;
         this.chatSettings = null;
+        this.prompts = this.allPrompts.filter(prompt => (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL);
         this.ui.clearSuggestions();
         this.clearSuggestedMessage('');
-        this.ui.setState({ chat: null, summary: null, chatSettings: null });
+        this.chooseSuggestedMessagePrompt();
+        this.ui.setState({
+          chat: null,
+          summary: null,
+          chatSettings: null,
+          prompts: this.prompts,
+          suggestedMessagePromptId: this.suggestedMessagePromptId
+        });
       }
       return;
     }
@@ -333,6 +341,9 @@ export class WhatsAppAIApp {
     if (saved.ok && saved.chat) this.chat = saved.chat;
     const activeChat = this.chat;
 
+    await this.loadPromptsForChat(activeChat);
+    if (this.chat !== activeChat) return;
+
     const context = await sendRuntime('CHAT_CONTEXT_GET', {
       accountId: activeChat.accountId,
       chatId: detected.whatsappChatId,
@@ -350,6 +361,7 @@ export class WhatsAppAIApp {
       summary: this.summary,
       chatSettings: this.chatSettings,
       chatSettingsLoading: this.chatSettingsLoading,
+      prompts: this.prompts,
       suggestedMessagePromptId: this.suggestedMessagePromptId
     });
 
@@ -491,6 +503,11 @@ export class WhatsAppAIApp {
 
     const prompts = this.prompts
       .filter(prompt => prompt.enabled && prompt.autoRun)
+      .sort((a, b) =>
+        ((a.scope === PROMPT_SCOPE.CHAT ? 0 : 1) - (b.scope === PROMPT_SCOPE.CHAT ? 0 : 1)) ||
+        ((a.order ?? 999) - (b.order ?? 999)) ||
+        String(a.name || '').localeCompare(String(b.name || ''))
+      )
       .slice(0, Math.max(1, this.settings.maxAutomaticPrompts || 3));
 
     if (!prompts.length) return false;
@@ -532,6 +549,10 @@ export class WhatsAppAIApp {
     }
     if (!this.keyStatus?.configured) {
       await openOptions();
+      return;
+    }
+    if (!this.prompts.some(item => item.id === prompt?.id)) {
+      alert('Este prompt não está disponível para a conversa atual.');
       return;
     }
 
@@ -1398,47 +1419,134 @@ export class WhatsAppAIApp {
     this.scheduleMessageScan(30);
   }
 
+  async loadPromptsForChat(chat) {
+    if (!chat?.accountId || !chat?.whatsappChatId) return false;
+    const result = await sendRuntime('PROMPT_LIST_FOR_CHAT', {
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId
+    });
+    if (!result.ok || this.chat !== chat) return false;
+
+    this.prompts = result.prompts || [];
+    this.lastAutoDraft = null;
+    this.chooseSuggestedMessagePrompt();
+    this.ui?.setState({
+      prompts: this.prompts,
+      suggestedMessagePromptId: this.suggestedMessagePromptId
+    });
+    return true;
+  }
+
   async savePrompt(prompt) {
-    if (prompt.autoRun && prompt.enabled) {
-      const otherAutomatic = this.prompts.filter(p => p.id !== prompt.id && p.enabled && p.autoRun).length;
+    const scope = prompt?.scope === PROMPT_SCOPE.CHAT ? PROMPT_SCOPE.CHAT : PROMPT_SCOPE.GLOBAL;
+    const prepared = {
+      ...prompt,
+      scope
+    };
+
+    if (scope === PROMPT_SCOPE.CHAT) {
+      if (!this.chat || !this.account) {
+        alert('Abra a conversa à qual este prompt deve pertencer.');
+        return false;
+      }
+
+      if (
+        prompt?.id &&
+        (prompt.accountId !== this.chat.accountId || prompt.chatId !== this.chat.whatsappChatId)
+      ) {
+        alert('Este prompt pertence a outra conversa e não pode ser alterado aqui.');
+        return false;
+      }
+
+      prepared.accountId = this.chat.accountId;
+      prepared.chatId = this.chat.whatsappChatId;
+      prepared.chatDisplayName = this.chat.displayName || '';
+    } else {
+      prepared.accountId = null;
+      prepared.chatId = null;
+      prepared.chatDisplayName = null;
+    }
+
+    if (prepared.autoRun && prepared.enabled) {
+      const otherAutomatic = this.prompts.filter(p => p.id !== prepared.id && p.enabled && p.autoRun).length;
       const total = otherAutomatic + 1;
       if (total > (this.settings.maxAutomaticPrompts || 3)) {
-        const ok = confirm(`Você terá ${total} prompts automáticos ativos. Pela configuração atual, somente os primeiros ${this.settings.maxAutomaticPrompts || 3} serão executados em cada ciclo. Salvar mesmo assim?`);
+        const ok = confirm(`Você terá ${total} prompts automáticos disponíveis nesta conversa. Pela configuração atual, somente os primeiros ${this.settings.maxAutomaticPrompts || 3} serão executados em cada ciclo. Prompts específicos desta conversa têm prioridade. Salvar mesmo assim?`);
         if (!ok) return false;
       }
     }
 
-    const result = await sendRuntime('PROMPT_SAVE', { prompt });
+    const result = await sendRuntime('PROMPT_SAVE', { prompt: prepared });
     if (!result.ok) {
       alert(result.message || 'Não foi possível salvar o prompt.');
       return false;
     }
     await this.reloadPrompts();
+    const all = await sendRuntime('PROMPT_LIST');
+    if (all.ok) this.allPrompts = all.prompts || this.allPrompts;
     return true;
   }
 
+  async duplicatePromptToCurrentChat(prompt) {
+    if (!this.chat || !prompt) return false;
+    const clone = {
+      ...prompt,
+      id: undefined,
+      scope: PROMPT_SCOPE.CHAT,
+      accountId: this.chat.accountId,
+      chatId: this.chat.whatsappChatId,
+      chatDisplayName: this.chat.displayName || '',
+      createdAt: undefined,
+      updatedAt: undefined
+    };
+    return this.savePrompt(clone);
+  }
+
   async deletePrompt(prompt) {
-    const result = await sendRuntime('PROMPT_DELETE', { id: prompt.id });
+    const result = await sendRuntime('PROMPT_DELETE', {
+      id: prompt.id,
+      accountId: this.chat?.accountId || null,
+      chatId: this.chat?.whatsappChatId || null
+    });
     if (!result.ok) {
       alert(result.message || 'Não foi possível excluir o prompt.');
       return false;
     }
     await this.reloadPrompts();
+    const all = await sendRuntime('PROMPT_LIST');
+    if (all.ok) this.allPrompts = all.prompts || this.allPrompts;
     return true;
   }
 
-  async reloadPrompts() {
-    const result = await sendRuntime('PROMPT_LIST');
-    if (result.ok) {
-      this.prompts = result.prompts || [];
-      this.lastAutoDraft = null;
-      this.chooseSuggestedMessagePrompt();
-      this.ui.setState({
-        prompts: this.prompts,
-        suggestedMessagePromptId: this.suggestedMessagePromptId
+  async reloadPrompts(triggerDraft = true) {
+    let result;
+    if (this.chat?.accountId && this.chat?.whatsappChatId) {
+      result = await sendRuntime('PROMPT_LIST_FOR_CHAT', {
+        accountId: this.chat.accountId,
+        chatId: this.chat.whatsappChatId
       });
-      this.onDraftChanged();
+    } else {
+      result = await sendRuntime('PROMPT_LIST');
+      if (result.ok) {
+        this.allPrompts = result.prompts || [];
+        result.prompts = this.allPrompts.filter(prompt =>
+          (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL
+        );
+      }
     }
+
+    if (!result.ok) return false;
+
+    this.prompts = result.prompts || [];
+    if (!this.chat) this.allPrompts = [...this.prompts];
+    this.lastAutoDraft = null;
+    this.chooseSuggestedMessagePrompt();
+    this.ui?.setState({
+      prompts: this.prompts,
+      suggestedMessagePromptId: this.suggestedMessagePromptId
+    });
+    if (triggerDraft) this.onDraftChanged();
+    return true;
   }
 
   async clearCurrentChatHistory() {

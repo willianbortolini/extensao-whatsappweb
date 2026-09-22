@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { CONFIG, DEFAULT_SETTINGS } from '../src/config.js';
-import { buildSuggestedMessageInput } from '../src/ai/context-builder.js';
+import { CONFIG, DEFAULT_SETTINGS, PROMPT_SCOPE } from '../src/config.js';
+import { buildSuggestionInput, buildSuggestedMessageInput } from '../src/ai/context-builder.js';
 import { suggestionCacheId } from '../src/ai/suggestion-cache.js';
 import { localizeSuggestion, translationSettings } from '../src/ai/translation.js';
+import { promptAvailableForChat } from '../src/storage/database.js';
 
 const source = (await readFile(new URL('../src/background/service-worker.js', import.meta.url), 'utf8'))
   .replace(/^import[\s\S]*?;\r?\n/gm, '');
@@ -43,8 +44,11 @@ function worker({ summary = null, prompt = null, chatSettings = null } = {}) {
     clearTimeout,
     crypto: webcrypto,
     TextEncoder,
+    buildSuggestionInput,
     buildSuggestedMessageInput,
     suggestionCacheId,
+    promptAvailableForChat,
+    PROMPT_SCOPE,
     localizeSuggestion,
     translationSettings,
     chrome: {
@@ -100,7 +104,7 @@ function worker({ summary = null, prompt = null, chatSettings = null } = {}) {
   });
 
   vm.runInContext(source + `
-    globalThis.api = { generateSuggestedMessage };
+    globalThis.api = { generateSuggestedMessage, generateSuggestion };
   `, context);
 
   return {
@@ -187,6 +191,59 @@ test('prompt desabilitado impede geração antes da API', async () => {
   await assert.rejects(
     w.generateSuggestedMessage({ accountId: 'a', chatId: 'c', promptId: 'p1' }),
     { code: 'PROMPT_UNAVAILABLE' }
+  );
+  assert.equal(w.calls.length, 0);
+});
+
+
+test('prompt específico de outra conversa é bloqueado em SUGGEST_MESSAGE_GENERATE antes da OpenAI', async () => {
+  const w = worker({
+    summary: { summary: 'Resumo', summaryVersion: 1 },
+    prompt: {
+      id: 'p-chat',
+      name: 'João',
+      instructions: 'Continue.',
+      enabled: true,
+      scope: PROMPT_SCOPE.CHAT,
+      accountId: 'a',
+      chatId: 'joao',
+      includeRecentMessages: false
+    }
+  });
+
+  await assert.rejects(
+    w.generateSuggestedMessage({ accountId: 'a', chatId: 'maria', promptId: 'p-chat' }),
+    { code: 'PROMPT_NOT_AVAILABLE_FOR_CHAT' }
+  );
+  assert.equal(w.calls.length, 0);
+});
+
+test('prompt específico de outra conversa também é bloqueado em SUGGEST_GENERATE', async () => {
+  const w = worker({
+    summary: { summary: 'Resumo', summaryVersion: 1 },
+    prompt: {
+      id: 'p-chat',
+      name: 'João',
+      instructions: 'Melhore.',
+      enabled: true,
+      scope: PROMPT_SCOPE.CHAT,
+      accountId: 'a',
+      chatId: 'joao',
+      includeSummary: false,
+      includeRecentMessages: false
+    }
+  });
+
+  await assert.rejects(
+    w.generateSuggestion({
+      accountId: 'a',
+      chatId: 'maria',
+      promptId: 'p-chat',
+      draft: 'Teste',
+      contactName: 'Maria',
+      automatic: false
+    }),
+    { code: 'PROMPT_NOT_AVAILABLE_FOR_CHAT' }
   );
   assert.equal(w.calls.length, 0);
 });

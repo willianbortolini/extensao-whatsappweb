@@ -511,3 +511,127 @@ Ctrl+Enter continua exclusivo da lista normal de sugestões, mantendo comportame
 ### Invalidação
 
 A mensagem sugerida é invalidada ao trocar de conta/conversa, ao mudar configurações da conversa (incluindo idiomas), ou quando a versão do resumo muda. Respostas assíncronas de outra conversa, configuração ou versão de resumo são descartadas.
+
+
+## Prompts globais e prompts por conversa
+
+Cada prompt possui um escopo:
+
+```text
+global
+chat
+```
+
+Prompt global:
+
+```js
+{
+  scope: 'global',
+  accountId: null,
+  chatId: null,
+  chatDisplayName: null
+}
+```
+
+Prompt específico:
+
+```js
+{
+  scope: 'chat',
+  accountId,
+  chatId,
+  chatDisplayName
+}
+```
+
+A identidade é sempre `accountId + chatId`; nome do contato/grupo é somente metadado visual.
+
+### Migração
+
+Prompts legados sem `scope` são migrados uma única vez como globais. A migração usa `meta["migration:prompt-scope-v1"]` e preserva id, instruções, ordem, autoRun e demais configurações.
+
+Todos os prompts padrão possuem `scope="global"`.
+
+### Listagem por conversa
+
+`PROMPT_LIST` continua servindo administração geral.
+
+`PROMPT_LIST_FOR_CHAT` recebe:
+
+```js
+{ accountId, chatId }
+```
+
+e retorna:
+
+```text
+todos os globais
++
+somente os prompts chat daquela conta/conversa
+```
+
+A sidebar trabalha com essa lista filtrada.
+
+### Segurança
+
+`SUGGEST_GENERATE` e `SUGGEST_MESSAGE_GENERATE` consultam o prompt no service worker e executam `promptAvailableForChat()` antes de qualquer chamada OpenAI.
+
+Um prompt específico de João enviado artificialmente em uma requisição para Maria retorna:
+
+```text
+PROMPT_NOT_AVAILABLE_FOR_CHAT
+```
+
+e não gera chamada de IA.
+
+A edição de um prompt existente não pode mudar `global -> chat` ou `chat -> global`. Para isso existe **Duplicar para esta conversa**.
+
+### Automáticos
+
+Os prompts automáticos disponíveis são ordenados por:
+
+```text
+1. específicos desta conversa
+2. globais
+3. order
+4. name
+```
+
+Depois é aplicado `maxAutomaticPrompts`.
+
+Assim, uma regra criada especificamente para o contato tem prioridade quando o limite é atingido.
+
+### Sidebar
+
+A seção Prompts separa visualmente:
+
+```text
+Somente esta conversa/grupo
+Globais
+```
+
+Ações:
+
+- **+ Prompt global**
+- **+ Prompt para este contato/grupo**
+- executar manualmente;
+- habilitar/desabilitar;
+- editar;
+- excluir;
+- duplicar prompt global para a conversa atual.
+
+O escopo de um prompt existente é somente leitura no editor.
+
+### Sugerir mensagem
+
+O seletor da função **Sugerir mensagem** recebe a mesma lista filtrada. Logo um prompt de João aparece no seletor de João, mas não em Maria.
+
+O restante do pipeline permanece:
+
+```text
+prompt permitido
+-> promptText
+-> tradução, se ativa
+-> finalText
+-> Usar / Aplicar e enviar
+```

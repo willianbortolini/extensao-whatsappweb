@@ -1,4 +1,4 @@
-import { DEFAULT_PROMPTS, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID } from '../config.js';
+import { DEFAULT_PROMPTS, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID, PROMPT_SCOPE } from '../config.js';
 import { messageStorageId, mergeMessageRecord } from './message-record.js';
 
 const DB_NAME = 'whatsapp_ai_assistant';
@@ -21,6 +21,46 @@ function txDone(tx) {
 
 export function chatKey(accountId, chatId) {
   return `${accountId}::${chatId}`;
+}
+
+export function normalizePromptScopeRecord(prompt = {}) {
+  const scope = prompt.scope === PROMPT_SCOPE.CHAT ? PROMPT_SCOPE.CHAT : PROMPT_SCOPE.GLOBAL;
+  if (scope === PROMPT_SCOPE.GLOBAL) {
+    return {
+      ...prompt,
+      scope,
+      accountId: null,
+      chatId: null,
+      chatDisplayName: null
+    };
+  }
+
+  return {
+    ...prompt,
+    scope,
+    accountId: String(prompt.accountId || '').trim(),
+    chatId: String(prompt.chatId || '').trim(),
+    chatDisplayName: String(prompt.chatDisplayName || '').trim().slice(0, 250)
+  };
+}
+
+export function promptAvailableForChat(prompt, accountId, chatId) {
+  const normalized = normalizePromptScopeRecord(prompt);
+  if (normalized.scope === PROMPT_SCOPE.GLOBAL) return true;
+  return normalized.accountId === String(accountId || '') &&
+    normalized.chatId === String(chatId || '');
+}
+
+export function promptScopePriority(prompt) {
+  return normalizePromptScopeRecord(prompt).scope === PROMPT_SCOPE.CHAT ? 0 : 1;
+}
+
+function sortPromptsForChat(values) {
+  return [...values].sort((a, b) =>
+    promptScopePriority(a) - promptScopePriority(b) ||
+    (a.order ?? 999) - (b.order ?? 999) ||
+    String(a.name || '').localeCompare(String(b.name || ''))
+  );
 }
 
 export async function openDatabase() {
@@ -96,22 +136,51 @@ export async function ensureDefaults() {
   const meta = tx.objectStore('meta');
   const count = await requestPromise(store.count());
   const now = Date.now();
-  const migrationKey = 'defaults:suggest-message-v1';
+  const suggestDefaultKey = 'defaults:suggest-message-v1';
+  const scopeMigrationKey = 'migration:prompt-scope-v1';
 
   if (!count) {
     for (const prompt of DEFAULT_PROMPTS) {
-      store.put({ ...prompt, createdAt: now, updatedAt: now });
+      store.put({
+        ...normalizePromptScopeRecord(prompt),
+        createdAt: now,
+        updatedAt: now
+      });
     }
-    meta.put({ key: migrationKey, value: true, updatedAt: now });
+    meta.put({ key: suggestDefaultKey, value: true, updatedAt: now });
+    meta.put({ key: scopeMigrationKey, value: true, updatedAt: now });
   } else {
-    const migrated = await requestPromise(meta.get(migrationKey));
-    if (!migrated) {
+    const defaultMigrated = await requestPromise(meta.get(suggestDefaultKey));
+    if (!defaultMigrated) {
       const defaultPrompt = DEFAULT_PROMPTS.find(prompt => prompt.id === DEFAULT_SUGGEST_MESSAGE_PROMPT_ID);
       if (defaultPrompt) {
         const existing = await requestPromise(store.get(DEFAULT_SUGGEST_MESSAGE_PROMPT_ID));
-        if (!existing) store.put({ ...defaultPrompt, createdAt: now, updatedAt: now });
+        if (!existing) {
+          store.put({
+            ...normalizePromptScopeRecord(defaultPrompt),
+            createdAt: now,
+            updatedAt: now
+          });
+        }
       }
-      meta.put({ key: migrationKey, value: true, updatedAt: now });
+      meta.put({ key: suggestDefaultKey, value: true, updatedAt: now });
+    }
+
+    const scopeMigrated = await requestPromise(meta.get(scopeMigrationKey));
+    if (!scopeMigrated) {
+      const prompts = await requestPromise(store.getAll());
+      for (const prompt of prompts) {
+        if (prompt.scope === PROMPT_SCOPE.GLOBAL || prompt.scope === PROMPT_SCOPE.CHAT) continue;
+        store.put({
+          ...prompt,
+          scope: PROMPT_SCOPE.GLOBAL,
+          accountId: null,
+          chatId: null,
+          chatDisplayName: null,
+          updatedAt: prompt.updatedAt || now
+        });
+      }
+      meta.put({ key: scopeMigrationKey, value: true, updatedAt: now });
     }
   }
 
@@ -123,7 +192,14 @@ export async function listPrompts() {
   const tx = db.transaction('prompts', 'readonly');
   const values = await requestPromise(tx.objectStore('prompts').getAll());
   await txDone(tx);
-  return values.sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || a.name.localeCompare(b.name));
+  return values
+    .map(normalizePromptScopeRecord)
+    .sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || a.name.localeCompare(b.name));
+}
+
+export async function listPromptsForChat(accountId, chatId) {
+  const values = await listPrompts();
+  return sortPromptsForChat(values.filter(prompt => promptAvailableForChat(prompt, accountId, chatId)));
 }
 
 export async function getPrompt(id) {
@@ -131,7 +207,7 @@ export async function getPrompt(id) {
   const tx = db.transaction('prompts', 'readonly');
   const value = await requestPromise(tx.objectStore('prompts').get(id));
   await txDone(tx);
-  return value || null;
+  return value ? normalizePromptScopeRecord(value) : null;
 }
 
 export async function savePrompt(prompt) {
@@ -140,10 +216,30 @@ export async function savePrompt(prompt) {
   const store = tx.objectStore('prompts');
   const existing = prompt.id ? await requestPromise(store.get(prompt.id)) : null;
   const now = Date.now();
+
+  const requested = normalizePromptScopeRecord(prompt);
+  const existingScope = existing ? normalizePromptScopeRecord(existing) : null;
+  if (existingScope && existingScope.scope !== requested.scope) {
+    throw Object.assign(new Error('O escopo de um prompt existente não pode ser alterado. Duplique o prompt para criar outro escopo.'), {
+      code: 'PROMPT_SCOPE_IMMUTABLE'
+    });
+  }
+
+  const scope = existingScope || requested;
+  if (scope.scope === PROMPT_SCOPE.CHAT && (!scope.accountId || !scope.chatId)) {
+    throw Object.assign(new Error('Prompts desta conversa exigem accountId e chatId.'), {
+      code: 'INVALID_PROMPT_SCOPE'
+    });
+  }
+
   const value = {
     id: prompt.id || crypto.randomUUID(),
     name: String(prompt.name || '').trim(),
     instructions: String(prompt.instructions || '').trim(),
+    scope: scope.scope,
+    accountId: scope.scope === PROMPT_SCOPE.CHAT ? scope.accountId : null,
+    chatId: scope.scope === PROMPT_SCOPE.CHAT ? scope.chatId : null,
+    chatDisplayName: scope.scope === PROMPT_SCOPE.CHAT ? scope.chatDisplayName : null,
     enabled: prompt.enabled !== false,
     autoRun: Boolean(prompt.autoRun),
     order: Number.isFinite(Number(prompt.order)) ? Number(prompt.order) : 999,

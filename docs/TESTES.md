@@ -260,3 +260,23 @@ tests/translation-apply.test.js
 - falha no composer mantém o resultado na sidebar;
 - sucesso no envio limpa o resultado e informa confirmação;
 - grupos usam o mesmo `whatsappChatId` e não dependem de telefone.
+
+
+## Prompts por contato/grupo — matriz obrigatória
+
+- prompt legado sem `scope` é tratado/migrado como `global`;
+- todos os prompts padrão são globais;
+- prompt global está disponível para qualquer conta/conversa;
+- prompt específico exige correspondência exata de `accountId + chatId`;
+- mesmo `chatId` em outra conta não autoriza o prompt;
+- `PROMPT_LIST_FOR_CHAT` retorna globais + específicos da conversa atual;
+- prompt específico de João não aparece em Maria;
+- prompt de grupo não aparece em outro grupo ou contato;
+- `SUGGEST_GENERATE` bloqueia prompt de outra conversa antes da OpenAI;
+- `SUGGEST_MESSAGE_GENERATE` bloqueia prompt de outra conversa antes da OpenAI;
+- prompts específicos automáticos têm prioridade sobre globais antes de aplicar `maxAutomaticPrompts`;
+- salvar prompt específico força ids da conversa atual;
+- duplicar global cria novo id e preserva o original;
+- trocar de conversa recarrega a lista e invalida gerações anteriores;
+- Sugerir mensagem mostra somente prompts permitidos para a conversa;
+- tradução e `finalText` continuam iguais para prompts globais e específicos.

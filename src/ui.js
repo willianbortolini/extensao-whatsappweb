@@ -1,4 +1,4 @@
-import { CONFIG } from './config.js';
+import { CONFIG, PROMPT_SCOPE } from './config.js';
 import { LANGUAGES, translationSettings, finalSuggestionTextForChat } from './ai/translation.js';
 
 function el(tag, options = {}, children = []) {
@@ -290,7 +290,10 @@ export class SidebarUI {
       disabled: this.chatSettingsLoading || Boolean(this.suggestedMessage && ['generating', 'translating'].includes(this.suggestedMessage.status))
     });
     for (const prompt of enabledPrompts) {
-      const option = el('option', { value: prompt.id, text: prompt.name });
+      const scopeLabel = prompt.scope === PROMPT_SCOPE.CHAT
+        ? `Esta conversa · ${this.chat?.displayName || prompt.chatDisplayName || 'Contato'}`
+        : 'Global';
+      const option = el('option', { value: prompt.id, text: `${prompt.name} · ${scopeLabel}` });
       if (prompt.id === this.suggestedMessagePromptId) option.selected = true;
       promptSelect.append(option);
     }
@@ -462,35 +465,102 @@ export class SidebarUI {
 
   renderPromptsSection() {
     const body = el('div');
-    if (!this.prompts.length) {
-      body.append(el('div', { className: 'wai-empty', text: 'Nenhum prompt cadastrado.' }));
-    } else {
-      for (const prompt of this.prompts) {
-        const check = el('input', { type: 'checkbox', checked: prompt.enabled });
-        check.addEventListener('change', () => this.handlers.onPromptToggle?.(prompt, { enabled: check.checked }));
-        const row = el('div', { className: 'wai-prompt-row' }, [
-          check,
-          el('div', { className: 'wai-prompt-name', text: prompt.name }),
-          prompt.autoRun ? el('span', { className: 'wai-prompt-tag', text: 'auto' }) : null,
-          button('▶', () => this.handlers.onRunPrompt?.(prompt), 'secondary small'),
-          button('✎', () => this.showPromptEditor(prompt), 'secondary small')
-        ]);
-        body.append(row);
-        row.querySelector('button').disabled = !this.chat || this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true;
+    const globals = this.prompts.filter(prompt => (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL);
+    const chatPrompts = this.prompts.filter(prompt => prompt.scope === PROMPT_SCOPE.CHAT);
+
+    const renderPromptRow = prompt => {
+      const check = el('input', { type: 'checkbox', checked: prompt.enabled });
+      check.addEventListener('change', () => this.handlers.onPromptToggle?.(prompt, { enabled: check.checked }));
+
+      const isChatPrompt = prompt.scope === PROMPT_SCOPE.CHAT;
+      const scopeText = isChatPrompt
+        ? (this.chat?.isGroup ? 'grupo' : 'esta conversa')
+        : 'global';
+
+      const run = button('▶', () => this.handlers.onRunPrompt?.(prompt), 'secondary small');
+      run.disabled = !this.chat || this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true || !prompt.enabled;
+
+      const edit = button('✎', () => this.showPromptEditor(prompt), 'secondary small');
+
+      const children = [
+        check,
+        el('div', { className: 'wai-prompt-name', text: prompt.name }),
+        el('span', { className: `wai-prompt-tag${isChatPrompt ? ' chat' : ''}`, text: scopeText }),
+        prompt.autoRun ? el('span', { className: 'wai-prompt-tag', text: 'auto' }) : null,
+        run,
+        edit
+      ];
+
+      if (!isChatPrompt && this.chat) {
+        children.push(el('button', {
+          className: 'wai-btn secondary small',
+          type: 'button',
+          text: '⧉',
+          title: `Duplicar "${prompt.name}" para ${this.chat.displayName || 'esta conversa'}`,
+          onClick: () => this.handlers.onPromptDuplicateToChat?.(prompt)
+        }));
       }
+
+      return el('div', { className: 'wai-prompt-row' }, children);
+    };
+
+    if (!globals.length && !chatPrompts.length) {
+      body.append(el('div', { className: 'wai-empty', text: 'Nenhum prompt disponível nesta conversa.' }));
     }
 
-    body.append(el('div', { className: 'wai-actions' }, [
-      button('+ Novo prompt', () => this.showPromptEditor(null), 'secondary small')
+    if (chatPrompts.length) {
+      body.append(el('div', {
+        className: 'wai-help wai-prompt-group-title',
+        text: this.chat?.isGroup
+          ? `Somente este grupo · ${this.chat?.displayName || ''}`
+          : `Somente esta conversa · ${this.chat?.displayName || ''}`
+      }));
+      for (const prompt of chatPrompts) body.append(renderPromptRow(prompt));
+    }
+
+    if (globals.length) {
+      body.append(el('div', { className: 'wai-help wai-prompt-group-title', text: 'Globais · disponíveis em todas as conversas' }));
+      for (const prompt of globals) body.append(renderPromptRow(prompt));
+    }
+
+    body.append(el('div', { className: 'wai-actions wai-prompt-create-actions' }, [
+      button('+ Prompt global', () => this.showPromptEditor(null, PROMPT_SCOPE.GLOBAL), 'secondary small'),
+      this.chat
+        ? button(
+            this.chat.isGroup ? '+ Prompt para este grupo' : '+ Prompt para este contato',
+            () => this.showPromptEditor(null, PROMPT_SCOPE.CHAT),
+            'secondary small'
+          )
+        : null
     ]));
+
+    if (this.chat) {
+      body.append(el('div', {
+        className: 'wai-help',
+        text: 'Prompts específicos aparecem somente nesta conversa. Prompts globais continuam disponíveis em todas.'
+      }));
+    }
 
     return section('Prompts', body);
   }
 
-  showPromptEditor(prompt) {
+  showPromptEditor(prompt, requestedScope = PROMPT_SCOPE.GLOBAL) {
+    const scope = prompt
+      ? (prompt.scope === PROMPT_SCOPE.CHAT ? PROMPT_SCOPE.CHAT : PROMPT_SCOPE.GLOBAL)
+      : (requestedScope === PROMPT_SCOPE.CHAT ? PROMPT_SCOPE.CHAT : PROMPT_SCOPE.GLOBAL);
+
+    if (scope === PROMPT_SCOPE.CHAT && !this.chat) {
+      alert('Abra uma conversa para criar um prompt específico.');
+      return;
+    }
+
     const current = prompt || {
       name: '',
       instructions: '',
+      scope,
+      accountId: scope === PROMPT_SCOPE.CHAT ? this.chat?.accountId : null,
+      chatId: scope === PROMPT_SCOPE.CHAT ? this.chat?.whatsappChatId : null,
+      chatDisplayName: scope === PROMPT_SCOPE.CHAT ? this.chat?.displayName : null,
       enabled: true,
       autoRun: false,
       order: this.prompts.length + 1,
@@ -503,7 +573,7 @@ export class SidebarUI {
 
     const backdrop = el('div', { className: 'wai-modal-backdrop' });
     const modal = el('div', { className: 'wai-modal' });
-    const name = el('input', { className: 'wai-input', value: current.name, placeholder: 'Ex.: Inglês' });
+    const name = el('input', { className: 'wai-input', value: current.name, placeholder: 'Ex.: Follow-up comercial' });
     const instructions = el('textarea', { className: 'wai-textarea', value: current.instructions, placeholder: 'Instruções para a IA…' });
     const enabled = el('input', { type: 'checkbox', checked: current.enabled });
     const autoRun = el('input', { type: 'checkbox', checked: current.autoRun });
@@ -515,8 +585,60 @@ export class SidebarUI {
     const maxTokens = el('input', { className: 'wai-input', type: 'number', value: current.maxOutputTokens || 150, min: 32, max: 1200 });
 
     const close = () => backdrop.remove();
+    const scopeDescription = scope === PROMPT_SCOPE.CHAT
+      ? `${this.chat?.isGroup ? 'Somente o grupo' : 'Somente o contato'}: ${this.chat?.displayName || current.chatDisplayName || 'conversa atual'}`
+      : 'Global: disponível para todos os contatos e grupos.';
+
+    const actions = [
+      button('Salvar', async () => {
+        const data = {
+          ...current,
+          id: prompt?.id,
+          scope,
+          accountId: scope === PROMPT_SCOPE.CHAT ? (current.accountId || this.chat?.accountId) : null,
+          chatId: scope === PROMPT_SCOPE.CHAT ? (current.chatId || this.chat?.whatsappChatId) : null,
+          chatDisplayName: scope === PROMPT_SCOPE.CHAT ? (current.chatDisplayName || this.chat?.displayName || '') : null,
+          name: name.value,
+          instructions: instructions.value,
+          enabled: enabled.checked,
+          autoRun: autoRun.checked,
+          includeSummary: includeSummary.checked,
+          generateSummaryIfMissing: generateSummary.checked,
+          includeRecentMessages: includeRecent.checked,
+          recentMessagesCount: Number(recentCount.value) || 0,
+          order: Math.max(1, Number(order.value) || 999),
+          maxOutputTokens: Number(maxTokens.value) || 150
+        };
+        const ok = await this.handlers.onPromptSave?.(data);
+        if (ok !== false) close();
+      }),
+      button('Cancelar', close, 'secondary')
+    ];
+
+    if (prompt && scope === PROMPT_SCOPE.GLOBAL && this.chat) {
+      actions.push(button('Duplicar para esta conversa', async () => {
+        const ok = await this.handlers.onPromptDuplicateToChat?.(prompt);
+        if (ok !== false) close();
+      }, 'secondary'));
+    }
+
+    if (prompt) {
+      actions.push(button('Excluir', async () => {
+        if (!confirm(`Excluir o prompt "${prompt.name}"?`)) return;
+        const ok = await this.handlers.onPromptDelete?.(prompt);
+        if (ok !== false) close();
+      }, 'danger'));
+    }
+
     modal.append(
-      el('h3', { text: prompt ? 'Editar prompt' : 'Novo prompt' }),
+      el('h3', {
+        text: prompt
+          ? 'Editar prompt'
+          : scope === PROMPT_SCOPE.CHAT
+            ? `Novo prompt para ${this.chat?.displayName || 'esta conversa'}`
+            : 'Novo prompt global'
+      }),
+      el('div', { className: 'wai-prompt-scope-note', text: scopeDescription }),
       field('Nome', name),
       field('Instruções', instructions, 'Variáveis disponíveis: {{texto}}, {{resumo}}, {{mensagens}}, {{nome_contato}}'),
       el('label', { className: 'wai-check' }, [enabled, el('span', { text: 'Prompt habilitado' })]),
@@ -526,34 +648,9 @@ export class SidebarUI {
       el('label', { className: 'wai-check' }, [generateSummary, el('span', { text: 'Gerar resumo antes se este prompt precisar dele e ainda não existir' })]),
       el('label', { className: 'wai-check' }, [includeRecent, el('span', { text: 'Enviar mensagens recentes' })]),
       field('Quantidade de mensagens recentes', recentCount),
-      field('Ordem', order, 'A ordem também define prioridade quando existe limite de prompts automáticos.'),
+      field('Ordem', order, 'Prompts específicos têm prioridade sobre globais quando existe limite de automáticos; dentro do mesmo escopo vale esta ordem.'),
       field('Limite máximo de saída (tokens)', maxTokens),
-      el('div', { className: 'wai-actions' }, [
-        button('Salvar', async () => {
-          const data = {
-            ...current,
-            id: prompt?.id,
-            name: name.value,
-            instructions: instructions.value,
-            enabled: enabled.checked,
-            autoRun: autoRun.checked,
-            includeSummary: includeSummary.checked,
-            generateSummaryIfMissing: generateSummary.checked,
-            includeRecentMessages: includeRecent.checked,
-            recentMessagesCount: Number(recentCount.value) || 0,
-            order: Math.max(1, Number(order.value) || 999),
-            maxOutputTokens: Number(maxTokens.value) || 150
-          };
-          const ok = await this.handlers.onPromptSave?.(data);
-          if (ok !== false) close();
-        }),
-        button('Cancelar', close, 'secondary'),
-        prompt ? button('Excluir', async () => {
-          if (!confirm(`Excluir o prompt "${prompt.name}"?`)) return;
-          const ok = await this.handlers.onPromptDelete?.(prompt);
-          if (ok !== false) close();
-        }, 'danger') : null
-      ])
+      el('div', { className: 'wai-actions' }, actions)
     );
 
     backdrop.append(modal);
