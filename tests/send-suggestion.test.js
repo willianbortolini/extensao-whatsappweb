@@ -86,3 +86,89 @@ test('evento input disparado durante substituição interna não apaga sugestõe
   assert.equal(app.currentDraft, 'Texto antigo');
 });
 
+
+
+test('mesmo texto não agenda sugestões automáticas repetidamente', () => {
+  const app = Object.create(WhatsAppAIApp.prototype);
+  let clears = 0;
+  let scheduled = 0;
+  const previousSetTimeout = globalThis.setTimeout;
+  const previousClearTimeout = globalThis.clearTimeout;
+
+  globalThis.setTimeout = () => { scheduled++; return 1; };
+  globalThis.clearTimeout = () => {};
+
+  Object.assign(app, {
+    replacingDraft: false,
+    currentDraft: 'teste',
+    lastAutoDraft: null,
+    draftVersion: 1,
+    generationVersion: 1,
+    isComposing: false,
+    debounceTimer: null,
+    suppressedDraft: null,
+    settings: { automaticSuggestions: true },
+    prompts: [{ enabled: true, autoRun: true }],
+    chat: {},
+    account: {},
+    keyStatus: { configured: true },
+    chatSettings: { aiEnabled: true },
+    chatSettingsLoading: false,
+    chatSettingsSaving: false,
+    applyingTranslation: false,
+    sendingSuggestion: false,
+    dom: { readDraft: () => 'teste' },
+    ui: { clearSuggestions: () => { clears++; } }
+  });
+  app.isChatAIEnabled = () => true;
+
+  try {
+    app.onDraftChanged();
+    assert.equal(scheduled, 0);
+    assert.equal(clears, 0);
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    globalThis.clearTimeout = previousClearTimeout;
+  }
+});
+
+test('Ctrl+Espaço força geração imediata e cancela a espera', () => {
+  const previousDocument = globalThis.document;
+  const composer = { contains: () => false };
+  globalThis.document = {
+    activeElement: composer,
+    body: { classList: { contains: () => false } }
+  };
+
+  const calls = [];
+  const app = Object.create(WhatsAppAIApp.prototype);
+  Object.assign(app, {
+    ui: { suggestions: [], getSelectedSuggestion: () => null },
+    dom: { getComposer: () => composer, readDraft: () => 'teste envio' },
+    canRequestSuggestions: () => true,
+    runAutomaticPrompts: (draft, force) => calls.push([draft, force]),
+    isComposing: false
+  });
+
+  const event = {
+    key: ' ',
+    code: 'Space',
+    ctrlKey: true,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    repeat: false,
+    preventDefault() { this.prevented = true; },
+    stopImmediatePropagation() { this.stopped = true; }
+  };
+
+  try {
+    app.handleKeyboard(event);
+    assert.equal(event.prevented, true);
+    assert.equal(event.stopped, true);
+    assert.deepEqual(calls, [['teste envio', true]]);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});

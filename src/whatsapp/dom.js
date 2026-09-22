@@ -164,6 +164,7 @@ export class WhatsAppDom {
     const value = String(text || '');
     const expected = normalizeWhitespace(value);
     const current = () => normalizeWhitespace(composer.innerText || composer.textContent || '');
+
     const selectComposer = () => {
       const selection = window.getSelection?.();
       const range = document.createRange?.();
@@ -173,19 +174,20 @@ export class WhatsAppDom {
       selection.addRange(range);
       return true;
     };
-    const notifyInput = () => {
+
+    const dispatchInput = (inputType, data = null) => {
       try {
         composer.dispatchEvent(new InputEvent('input', {
           bubbles: true,
-          inputType: 'insertText',
-          data: value
+          inputType,
+          data
         }));
       } catch {
         composer.dispatchEvent(new Event('input', { bubbles: true }));
       }
     };
-    const finish = () => {
-      notifyInput();
+
+    const moveCaretToEnd = () => {
       try {
         const selection = window.getSelection();
         const range = document.createRange();
@@ -194,55 +196,50 @@ export class WhatsAppDom {
         selection.removeAllRanges();
         selection.addRange(range);
       } catch {}
-      return true;
     };
 
     composer.focus();
 
-    // 1) Same replacement method already used successfully by the Locenza CRM
-    // extension. Verify the real composer content instead of trusting the
-    // boolean returned by execCommand.
-    try {
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, value);
-    } catch {}
-    if (current() === expected) return finish();
-
-    // 2) Restrict the selection explicitly to the WhatsApp contenteditable.
-    try {
-      selectComposer();
-      document.execCommand('insertText', false, value);
-    } catch {}
-    if (current() === expected) return finish();
-
-    // 3) Some Lexical versions need an explicit delete before insertText.
+    // Always clear first. Never try multiple insertions against a dirty composer,
+    // otherwise a failed replacement can concatenate the suggestion repeatedly.
     try {
       selectComposer();
       document.execCommand('delete', false, null);
+    } catch {}
+
+    if (current()) {
+      try {
+        composer.textContent = '';
+        if ('innerText' in composer) composer.innerText = '';
+        dispatchInput('deleteContentBackward');
+      } catch {
+        return false;
+      }
+    }
+
+    if (current()) return false;
+    if (!value) return true;
+
+    // Insert the suggestion exactly once through the browser editing pipeline
+    // WhatsApp/Lexical listens to.
+    try {
+      composer.focus();
       document.execCommand('insertText', false, value);
     } catch {}
-    if (current() === expected) return finish();
 
-    // 4) Last resort: update the contenteditable itself and fire input so the
-    // WhatsApp editor can reconcile its internal state.
-    try {
-      composer.textContent = value;
-      if ('innerText' in composer) composer.innerText = value;
-      notifyInput();
-    } catch {
-      return false;
+    if (current() !== expected) {
+      // Last resort is replacement, never append.
+      try {
+        composer.textContent = value;
+        if ('innerText' in composer) composer.innerText = value;
+        dispatchInput('insertText', value);
+      } catch {
+        return false;
+      }
     }
 
     if (current() !== expected) return false;
-
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(composer);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    } catch {}
+    moveCaretToEnd();
     return true;
   }
 

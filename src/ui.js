@@ -163,7 +163,7 @@ export class SidebarUI {
     } else if (!this.suggestions.length) {
       body.append(
         el('div', { className: 'wai-empty', text: 'Digite uma mensagem. Após a pausa configurada, os prompts automáticos aparecerão aqui.' }),
-        el('div', { className: 'wai-shortcuts', text: 'Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar' })
+        el('div', { className: 'wai-shortcuts', text: 'Ctrl+Espaço: gerar agora • Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar' })
       );
     } else {
       this.suggestions.forEach((item, index) => {
@@ -201,7 +201,7 @@ export class SidebarUI {
         }
         body.append(card);
       });
-      body.append(el('div', { className: 'wai-shortcuts', text: 'Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar a selecionada (ou a primeira pronta). Enter e Shift+Enter continuam sendo do WhatsApp.' }));
+      body.append(el('div', { className: 'wai-shortcuts', text: 'Ctrl+Espaço: gerar agora • Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar a selecionada (ou a primeira pronta). Enter e Shift+Enter continuam sendo do WhatsApp.' }));
     }
 
     return section('Sugestões', body, el('button', {

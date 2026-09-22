@@ -180,7 +180,11 @@ test('setDraft usa selectAll + insertText para substituir completamente o rascun
   globalThis.document = {
     execCommand(command, _ui, value) {
       commands.push([command, value]);
-      if (command === 'selectAll') return true;
+      if (command === 'delete') {
+        composer.textContent = '';
+        composer.innerText = '';
+        return true;
+      }
       if (command === 'insertText') {
         composer.textContent = value;
         composer.innerText = value;
@@ -199,7 +203,7 @@ test('setDraft usa selectAll + insertText para substituir completamente o rascun
 
   try {
     assert.equal(dom.setDraft('Sugestão nova'), true);
-    assert.deepEqual(commands, [['selectAll', null], ['insertText', 'Sugestão nova']]);
+    assert.deepEqual(commands, [['delete', null], ['insertText', 'Sugestão nova']]);
     assert.equal(composer.textContent, 'Sugestão nova');
     assert.ok(events.includes('input'));
   } finally {
@@ -240,23 +244,22 @@ test('sendDraft usa Enter como fallback e só confirma envio quando o WhatsApp l
   }
 });
 
-test('setDraft não confia em execCommand=true quando o WhatsApp mantém o texto antigo', () => {
+
+
+
+
+test('setDraft nunca concatena sugestão com rascunho antigo', () => {
   const previous = {
     document: globalThis.document,
     window: globalThis.window,
     InputEvent: globalThis.InputEvent,
     Event: globalThis.Event
   };
-  const events = [];
   const composer = {
-    textContent: 'texto antigo',
-    innerText: 'texto antigo',
+    textContent: 'teste envio',
+    innerText: 'teste envio',
     focus() {},
-    dispatchEvent(event) { events.push(event.type); },
-    replaceChildren(node) {
-      this.textContent = node.textContent;
-      this.innerText = node.textContent;
-    }
+    dispatchEvent() {}
   };
 
   globalThis.InputEvent = class {
@@ -266,33 +269,38 @@ test('setDraft não confia em execCommand=true quando o WhatsApp mantém o texto
     constructor(type) { this.type = type; }
   };
   globalThis.window = {
-    getSelection: () => ({
-      removeAllRanges() {},
-      addRange() {}
-    })
+    getSelection: () => ({ removeAllRanges() {}, addRange() {} })
   };
   globalThis.document = {
-    execCommand() {
-      return true; // Chromium can report success while editor content stays unchanged.
+    execCommand(command, _ui, value) {
+      if (command === 'delete') {
+        composer.textContent = '';
+        composer.innerText = '';
+        return true;
+      }
+      if (command === 'insertText') {
+        composer.textContent += value;
+        composer.innerText += value;
+        return true;
+      }
+      return false;
     },
     createRange: () => ({
       selectNodeContents() {},
       collapse() {}
-    }),
-    createTextNode: text => ({ textContent: text })
+    })
   };
 
   const dom = new WhatsAppDom();
   dom.getComposer = () => composer;
 
   try {
-    assert.equal(dom.setDraft('Sugestão nova'), true);
-    assert.equal(composer.textContent, 'Sugestão nova');
-    assert.ok(events.includes('input'));
+    assert.equal(dom.setDraft('Mensagem de teste.'), true);
+    assert.equal(composer.textContent, 'Mensagem de teste.');
+    assert.equal(composer.innerText, 'Mensagem de teste.');
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
     }
   }
 });
-

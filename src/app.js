@@ -362,18 +362,19 @@ export class WhatsAppAIApp {
 
   onDraftChanged() {
     if (this.replacingDraft) return;
-    const draft = this.dom.readDraft();
-    if (draft !== this.currentDraft) {
-      this.currentDraft = draft;
-      this.lastAutoDraft = null;
-      this.draftVersion += 1;
-      this.invalidateGenerations();
-      this.cancelDebounce();
-      this.ui.clearSuggestions();
 
-      if (this.suppressedDraft != null && draft !== this.suppressedDraft) {
-        this.suppressedDraft = null;
-      }
+    const draft = this.dom.readDraft();
+    if (draft === this.currentDraft) return;
+
+    this.currentDraft = draft;
+    this.lastAutoDraft = null;
+    this.draftVersion += 1;
+    this.invalidateGenerations();
+    this.cancelDebounce();
+    this.ui.clearSuggestions();
+
+    if (this.suppressedDraft != null && draft !== this.suppressedDraft) {
+      this.suppressedDraft = null;
     }
 
     if (this.isComposing) return;
@@ -381,27 +382,34 @@ export class WhatsAppAIApp {
 
     const version = this.draftVersion;
     this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
       if (version !== this.draftVersion) return;
       if (this.dom.readDraft() !== draft) return;
-      this.runAutomaticPrompts(draft);
-    }, this.settings.debounceMs || CONFIG.defaultDebounceMs);
+      this.runAutomaticPrompts(draft, false);
+    }, CONFIG.defaultDebounceMs);
   }
 
   isChatAIEnabled() {
     return Boolean(this.chat && this.account && !this.chatSettingsLoading && !this.chatSettingsSaving && this.chatSettings?.aiEnabled === true);
   }
 
-  canAutoSuggest(draft) {
-    if (this.applyingTranslation) return false;
+  canRequestSuggestions(draft) {
+    if (this.applyingTranslation || this.sendingSuggestion) return false;
     if (!this.isChatAIEnabled()) return false;
     if (!this.chat || !this.account) return false;
     if (!this.keyStatus?.configured) return false;
-    if (this.settings?.aiPaused || !this.settings?.automaticSuggestions) return false;
+    if (this.settings?.aiPaused) return false;
     if (document.body.classList.contains(CONFIG.mediaOpenClass)) return false;
     if (!draft || draft.trim().length < CONFIG.minDraftLength) return false;
+    return this.prompts.some(prompt => prompt.enabled && prompt.autoRun);
+  }
+
+  canAutoSuggest(draft) {
+    if (!this.canRequestSuggestions(draft)) return false;
+    if (!this.settings?.automaticSuggestions) return false;
     if (this.suppressedDraft != null && draft === this.suppressedDraft) return false;
     if (this.lastAutoDraft != null && draft === this.lastAutoDraft) return false;
-    return this.prompts.some(prompt => prompt.enabled && prompt.autoRun);
+    return true;
   }
 
   cancelDebounce() {
@@ -413,15 +421,24 @@ export class WhatsAppAIApp {
     this.generationVersion += 1;
   }
 
-  async runAutomaticPrompts(draft) {
-    if (!this.canAutoSuggest(draft)) return;
+  async runAutomaticPrompts(draft, forceNow = false) {
+    if (forceNow) {
+      if (!this.canRequestSuggestions(draft)) return false;
+    } else if (!this.canAutoSuggest(draft)) {
+      return false;
+    }
+
     const prompts = this.prompts
       .filter(prompt => prompt.enabled && prompt.autoRun)
       .slice(0, Math.max(1, this.settings.maxAutomaticPrompts || 3));
 
-    if (!prompts.length) return;
+    if (!prompts.length) return false;
 
+    this.cancelDebounce();
+    // A forced Ctrl+Space also satisfies the automatic cycle for this exact
+    // draft, so another request will not fire five seconds later.
     this.lastAutoDraft = draft;
+
     const version = ++this.generationVersion;
     const suggestions = prompts.map(prompt => ({
       id: `${version}:${prompt.id}`,
@@ -431,13 +448,14 @@ export class WhatsAppAIApp {
       text: '',
       error: '',
       draft,
-      automatic: true
+      automatic: !forceNow
     }));
     this.ui.setSuggestions(suggestions);
 
     for (const suggestion of suggestions) {
       this.generateSuggestionItem(suggestion, version);
     }
+    return true;
   }
 
   async runManualPrompt(prompt) {
@@ -841,6 +859,16 @@ export class WhatsAppAIApp {
     const composer = this.dom.getComposer();
     const composerFocused = composer && (document.activeElement === composer || composer.contains(document.activeElement));
     if (!composerFocused) return;
+
+    if ((event.code === 'Space' || event.key === ' ') && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
+      const draft = this.dom.readDraft();
+      if (this.canRequestSuggestions(draft)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) this.runAutomaticPrompts(draft, true);
+      }
+      return;
+    }
 
     if (event.key === 'Enter' && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
       const selected = this.ui.getSelectedSuggestion() || this.ui.suggestions.find(item => item.status === 'success' && item.text);
