@@ -133,12 +133,14 @@ account
 chat
 prompt
 draft
-summary version
-IDs das mensagens recentes
+instruções e entrada efetivamente enviadas (incluindo contexto habilitado)
 modelo
+limite de tokens de saída
 ```
 
 TTL padrão: 30 minutos.
+
+Editar instruções, contexto enviado ou limite de saída invalida a resposta anterior.
 
 Respostas de cache não acrescentam uso de tokens.
 
@@ -219,12 +221,12 @@ No composer do WhatsApp:
 ```text
 Tab            próxima sugestão
 Shift+Tab      sugestão anterior
-Enter          aplica sugestão selecionada
+Ctrl+Enter     aplica e envia a selecionada ou a primeira pronta
 Esc            remove seleção
 Alt+1..9       aplica resultado correspondente
 ```
 
-Enter sem sugestão selecionada continua pertencendo ao WhatsApp.
+Enter e Shift+Enter sempre pertencem ao WhatsApp, mesmo com sugestão selecionada.
 
 ## Atualizações
 

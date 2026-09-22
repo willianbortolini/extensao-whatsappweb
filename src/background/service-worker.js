@@ -23,6 +23,9 @@ import {
   clearData
 } from '../storage/database.js';
 import { buildSuggestionInput, buildSummaryInput, normalizePromptInput } from '../ai/context-builder.js';
+import { suggestionCacheId } from '../ai/suggestion-cache.js';
+import { buildTranslationInput, translationSettings, localizeSuggestion } from '../ai/translation.js';
+import { getTranslation, saveTranslation } from '../storage/database.js';
 
 const STORAGE_SETTINGS = 'wai_settings';
 const STORAGE_API_KEY = 'wai_api_key';
@@ -195,12 +198,6 @@ function drainQueue() {
   }
 }
 
-async function sha256(value) {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map(v => v.toString(16).padStart(2, '0')).join('');
-}
-
 function extractOutputText(data) {
   if (typeof data?.output_text === 'string') return data.output_text.trim();
   const parts = [];
@@ -212,7 +209,13 @@ function extractOutputText(data) {
   return parts.join('\n').trim();
 }
 
-async function callOpenAI({ instructions, input, model, maxOutputTokens, operation, chatId = null, promptId = null, automatic = false }) {
+async function assertChatAIEnabled(accountId, chatId) {
+  if (!accountId || !chatId || (await getChatSettings(accountId, chatId))?.aiEnabled !== true) {
+    throw Object.assign(new Error('IA desativada para esta conversa.'), { code: 'CHAT_AI_DISABLED' });
+  }
+}
+
+async function callOpenAI({ instructions, input, model, maxOutputTokens, operation, accountId = null, chatId = null, promptId = null, automatic = false, translation = null }) {
   assertSize(instructions, 24000, 'instructions');
   assertSize(input, 90000, 'input');
 
@@ -223,6 +226,17 @@ async function callOpenAI({ instructions, input, model, maxOutputTokens, operati
   if (!key) throw Object.assign(new Error('Configure sua API key da OpenAI.'), { code: 'API_KEY_REQUIRED' });
 
   return enqueue(async () => {
+    // Recheck after waiting in the queue, immediately before starting the request.
+    if (operation !== 'key-test') await assertChatAIEnabled(accountId, chatId);
+    if (translation) {
+      const current = translationSettings(await getChatSettings(accountId, chatId));
+      if (!current.enabled || current.myLanguage !== translation.myLanguage || current.contactLanguage !== translation.contactLanguage) {
+        throw Object.assign(new Error('As configurações de tradução mudaram. Tente novamente.'), { code: 'TRANSLATION_CHANGED' });
+      }
+      const settings = await getSettings();
+      if (settings.aiPaused) throw Object.assign(new Error('A IA está pausada.'), { code: 'AI_PAUSED' });
+      await enforceBudget({ automatic });
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
 
@@ -267,6 +281,10 @@ async function callOpenAI({ instructions, input, model, maxOutputTokens, operati
     }
 
     const text = extractOutputText(data);
+    if (translation && data?.status === 'incomplete') {
+      // Still record usage below, but never store/apply a partial translation.
+      data.translationIncomplete = true;
+    }
     if (!text) throw Object.assign(new Error('A OpenAI retornou uma resposta vazia.'), { code: 'OPENAI_EMPTY' });
 
     const usage = data?.usage || {};
@@ -282,6 +300,7 @@ async function callOpenAI({ instructions, input, model, maxOutputTokens, operati
       timestamp: Date.now()
     });
 
+    if (data.translationIncomplete) throw Object.assign(new Error('Tradução incompleta. Divida o texto em mensagens menores.'), { code: 'TRANSLATION_INCOMPLETE' });
     return {
       text,
       usage: {
@@ -295,6 +314,7 @@ async function callOpenAI({ instructions, input, model, maxOutputTokens, operati
 }
 
 async function generateSummary({ accountId, chatId, automatic = false, forceRebuild = false }) {
+  await assertChatAIEnabled(accountId, chatId);
   assertSize(accountId, 500, 'accountId');
   assertSize(chatId, 500, 'chatId');
 
@@ -321,6 +341,7 @@ async function generateSummary({ accountId, chatId, automatic = false, forceRebu
     model: settings.model,
     maxOutputTokens: CONFIG.summaryOutputTokens,
     operation: automatic ? 'summary-auto' : (forceRebuild ? 'summary-rebuild' : 'summary-manual'),
+    accountId,
     chatId,
     automatic
   });
@@ -340,6 +361,7 @@ async function generateSummary({ accountId, chatId, automatic = false, forceRebu
 
 async function generateSuggestion(payload) {
   const { accountId, chatId, promptId, draft, contactName, automatic = false } = payload;
+  await assertChatAIEnabled(accountId, chatId);
   assertSize(accountId, 500, 'accountId');
   assertSize(chatId, 500, 'chatId');
   assertSize(promptId, 500, 'promptId');
@@ -360,17 +382,19 @@ async function generateSuggestion(payload) {
     ? await getRecentMessages(accountId, chatId, Math.max(1, Math.min(CONFIG.maxRecentMessages, prompt.recentMessagesCount || CONFIG.defaultRecentMessages)))
     : [];
 
-  const built = buildSuggestionInput({
+  const built = localizeSuggestion(buildSuggestionInput({
     prompt,
     draft,
     summary: summary?.summary || '',
     recentMessages,
     contactName
-  });
+  }), await getChatSettings(accountId, chatId));
 
   const settings = await getSettings();
-  const contextVersion = `${summary?.summaryVersion || 0}:${recentMessages.map(m => m.id).join(',')}`;
-  const cacheId = await sha256([accountId, chatId, promptId, draft, contextVersion, settings.model].join('|'));
+  const maxOutputTokens = prompt.maxOutputTokens || CONFIG.suggestionOutputTokens;
+  const cacheId = await suggestionCacheId({
+    accountId, chatId, promptId, model: settings.model, ...built, maxOutputTokens
+  });
   const cached = await getCache(cacheId);
   if (cached) {
     return {
@@ -384,8 +408,9 @@ async function generateSuggestion(payload) {
   const result = await callOpenAI({
     ...built,
     model: settings.model,
-    maxOutputTokens: prompt.maxOutputTokens || CONFIG.suggestionOutputTokens,
+    maxOutputTokens,
     operation: 'suggestion',
+    accountId,
     chatId,
     promptId,
     automatic
@@ -400,6 +425,48 @@ async function generateSuggestion(payload) {
   });
 
   return { ...result, cached: false };
+}
+
+const translationJobs = new Map();
+
+async function translateText({ accountId, chatId, text, direction, messageId = null }) {
+  await assertChatAIEnabled(accountId, chatId);
+  const translation = translationSettings(await getChatSettings(accountId, chatId));
+  if (!translation.enabled) throw Object.assign(new Error('Ative o modo tradução nesta conversa.'), { code: 'TRANSLATION_DISABLED' });
+  if (!['incoming', 'outgoing'].includes(direction) || typeof text !== 'string' || !text.trim()) {
+    throw new Error('Texto ou direção de tradução inválidos.');
+  }
+  assertSize(text, CONFIG.maxDraftChars, 'text');
+  const sourceLanguage = direction === 'incoming' ? translation.contactLanguage : translation.myLanguage;
+  const targetLanguage = direction === 'incoming' ? translation.myLanguage : translation.contactLanguage;
+  const settings = await getSettings();
+  if (settings.aiPaused) throw Object.assign(new Error('A IA está pausada.'), { code: 'AI_PAUSED' });
+  const built = buildTranslationInput(text, sourceLanguage, targetLanguage);
+  const id = await suggestionCacheId({ accountId, chatId, promptId: `translation:${direction}:${messageId || ''}`, model: settings.model, ...built, maxOutputTokens: 2000 });
+  const cached = settings.saveHistory ? await getTranslation(id) : null;
+  if (cached) return { text: cached.translatedText, cached: true };
+  if (translationJobs.has(id)) return translationJobs.get(id);
+  const job = (async () => {
+    const result = sourceLanguage === targetLanguage ? { text, cached: true } : await callOpenAI({
+      ...built, model: settings.model, maxOutputTokens: 2000,
+      operation: `translation-${direction}`, accountId, chatId,
+      automatic: direction === 'incoming', translation
+    });
+    // Keep both versions. An applied draft is not recorded as a sent message.
+    const current = translationSettings(await getChatSettings(accountId, chatId));
+    await assertChatAIEnabled(accountId, chatId);
+    if (!current.enabled || current.myLanguage !== translation.myLanguage || current.contactLanguage !== translation.contactLanguage) {
+      throw Object.assign(new Error('As configurações de tradução mudaram.'), { code: 'TRANSLATION_CHANGED' });
+    }
+    if ((await getSettings()).saveHistory) await saveTranslation({
+      id, accountId, chatId, messageId, direction, originalText: text,
+      translatedText: result.text, sourceLanguage, targetLanguage,
+      model: settings.model, createdAt: Date.now()
+    });
+    return result;
+  })();
+  translationJobs.set(id, job);
+  try { return await job; } finally { translationJobs.delete(id); }
 }
 
 async function maybeCleanup() {
@@ -508,7 +575,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const every = Math.max(2, Number(chatSettings?.summaryEvery || settings.defaultSummaryEvery));
         return {
           inserted,
-          autoSummaryDue: Boolean(inserted && enabled && mode === 'automatic' && (summaryState?.messagesSinceSummary || 0) >= every)
+          autoSummaryDue: Boolean(chatSettings?.aiEnabled === true && inserted && enabled && mode === 'automatic' && (summaryState?.messagesSinceSummary || 0) >= every)
         };
       }
 
@@ -549,6 +616,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case 'SUGGEST_GENERATE':
         return await generateSuggestion(payload);
+
+      case 'TRANSLATE_TEXT':
+        return await translateText(payload);
 
       case 'USAGE_STATS':
         return { stats: await getUsageStats() };

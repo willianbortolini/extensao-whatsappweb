@@ -70,8 +70,9 @@ Cobertura inicial:
 - Tab seleciona primeira;
 - Tab avança;
 - Shift+Tab volta;
-- Enter aplica e não envia;
-- Enter sem seleção envia normalmente pelo WhatsApp;
+- Ctrl+Enter aplica e envia a selecionada; sem seleção, usa a primeira pronta;
+- Enter envia normalmente pelo WhatsApp, mesmo com seleção;
+- Shift+Enter quebra linha normalmente, mesmo com seleção;
 - Esc remove seleção;
 - Alt+1 aplica primeira.
 
@@ -126,7 +127,23 @@ No DevTools:
 - prompt sem resumo não envia resumo;
 - prompt sem mensagens não envia mensagens.
 
-### Consumo
+### Modo tradução — validação manual no WhatsApp autenticado
+
+- Recarregar a extensão e a página; confirmar migração do IndexedDB para v3 preservando mensagens e resumos.
+- Abrir conversa com mensagens antigas já carregadas; clicar em **Traduzir balões do contato** e confirmar registro de mensagens recebidas e enviadas antes da tradução.
+- Repetir o clique; confirmar que a contagem não aumenta e que data/hora original e primeira captura não mudam. Confirmar que duas mensagens com IDs diferentes no mesmo minuto permanecem separadas.
+- Sem marcar **Usar IA**, ativar tradução e confirmar ausência de chamadas à API.
+- Configurar português/inglês, habilitar IA e tradução e abrir conversa com mensagens recebidas em inglês.
+- Confirmar tradução junto ao balão e original intacto; comparar `messages` e `translations` no IndexedDB.
+- Gerar uma sugestão: resultado em português, aplicar: campo em inglês, nenhuma mensagem enviada.
+- Traduzir diretamente um rascunho; editar o campo ou trocar de conversa durante a chamada e confirmar que nada é sobrescrito.
+- Reabrir a conversa e confirmar uso das traduções persistidas sem nova chamada.
+- Desativar tradução e confirmar remoção dos blocos traduzidos. Desativar IA e confirmar bloqueio inclusive de chamadas na fila.
+- Alterar idioma e confirmar que traduções antigas não são exibidas para o novo idioma.
+- Simular falha ou limite de consumo e confirmar ausência de tentativas contínuas; usar o botão de tentar novamente.
+- Limpar histórico e confirmar remoção dos registros de tradução da conversa.
+
+### Consumo (verificações gerais)
 
 - cache evita nova chamada;
 - fila limita concorrência;

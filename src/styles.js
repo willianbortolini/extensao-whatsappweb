@@ -9,6 +9,8 @@ body.wai-media-viewer-open #wai-sidebar,body.wai-media-viewer-open #wai-launcher
 body.wai-media-viewer-open #app{width:100%!important}
 #wai-sidebar{position:fixed;right:0;top:0;width:400px;height:100vh;height:100dvh;z-index:9998;background:var(--wai-bg);border-left:1px solid var(--wai-border);color:var(--wai-text);font-family:Arial,sans-serif;display:flex;flex-direction:column;box-shadow:var(--wai-shadow)}
 #wai-sidebar *{box-sizing:border-box}
+#wai-sidebar{color-scheme:light}
+#wai-sidebar select.wai-select,#wai-sidebar select.wai-select:focus,#wai-sidebar select.wai-select option{color-scheme:light;background-color:#fff!important;color:#15231d!important}
 .wai-header{height:60px;min-height:60px;background:var(--wai-surface);border-bottom:1px solid var(--wai-border);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wai-brand{display:flex;align-items:center;gap:9px;font-size:16px;font-weight:700}
 .wai-logo{width:22px;height:22px;border-radius:50%;background:var(--wai-brand);box-shadow:0 0 0 5px var(--wai-soft)}
@@ -67,6 +69,7 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-divider{height:1px;background:var(--wai-border);margin:12px 0}
 .wai-empty{padding:8px 0;color:var(--wai-muted);font-size:12px}
 .wai-shortcuts{font-size:10px;color:var(--wai-muted);margin-top:8px}
+[data-wai-translation]{white-space:pre-wrap;overflow-wrap:anywhere;border-top:1px solid #83958e66;margin:6px 0;padding:8px 10px;font-size:13px;line-height:1.45;color:inherit;background:#0a9d7820;border-radius:6px;max-width:100%}
 @media(max-width:1000px){
   #wai-sidebar{width:360px}
   body.wai-sidebar-active:not(.wai-media-viewer-open) #app{width:calc(100% - 360px)!important}

@@ -56,6 +56,21 @@ function senderFromPrePlain(raw) {
   return match ? match[1].trim() : '';
 }
 
+function messageDirection(container, dataId) {
+  if (container.matches('.message-out') || container.closest('.message-out') || container.querySelector('.message-out')) return 'outgoing';
+  if (container.matches('.message-in') || container.closest('.message-in') || container.querySelector('.message-in')) return 'incoming';
+  // WhatsApp message keys encode fromMe even when the CSS classes are absent.
+  if (/^true_/i.test(dataId)) return 'outgoing';
+  if (/^false_/i.test(dataId)) return 'incoming';
+  if (container.querySelector('[data-testid="tail-out"], [data-icon="tail-out"]')) return 'outgoing';
+  if (container.querySelector('[data-testid="tail-in"], [data-icon="tail-in"]')) return 'incoming';
+  const author = container.querySelector('span[aria-label$=":"]')?.getAttribute('aria-label')?.trim();
+  if (/^(você|you|tu|tú):$/i.test(author || '')) return 'outgoing';
+  if (author) return 'incoming';
+  if (container.querySelector('[data-testid="msg-meta"][role="button"]')) return 'outgoing';
+  return 'unknown';
+}
+
 export class WhatsAppDom {
   getConversationTitleElement() {
     return firstVisible([
@@ -124,6 +139,8 @@ export class WhatsAppDom {
   }
 
   getComposer() {
+    const current = firstVisible(['#main [data-testid="conversation-compose-box-input"][contenteditable="true"]']);
+    if (current) return current;
     const footer = document.querySelector('#main footer');
     const root = footer || document.querySelector('#main') || document;
     const candidates = [
@@ -179,35 +196,71 @@ export class WhatsAppDom {
     return true;
   }
 
+  async sendDraft(expectedText, chatId, stillAllowed = () => true) {
+    // Let Lexical commit the inserted text before clicking its send control.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (!stillAllowed() || this.readConversation()?.whatsappChatId !== chatId || this.readDraft() !== normalizeWhitespace(expectedText)) return false;
+      const composer = this.getComposer();
+      const composeBox = composer?.closest('[data-testid="compose-box"]') || composer?.closest('footer');
+      if (!composeBox) return false;
+      const marker = firstVisible([
+        'button[data-testid="compose-btn-send"]',
+        'button[aria-label="Enviar"]', 'button[aria-label="Send"]',
+        '[data-testid="wds-ic-send-filled"]', '[data-icon="wds-ic-send-filled"]',
+        '[data-testid="send"]', '[data-icon="send"]'
+      ], composeBox);
+      const button = marker?.closest('button, [role="button"]');
+      if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
+        button.click();
+        return true;
+      }
+      // The composer may need a render before its send button becomes available.
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  }
+
   readVisibleMessages() {
+    this.messageElements = new Map();
     const main = document.querySelector('#main');
     if (!main) return [];
 
     const candidates = new Set([
       ...main.querySelectorAll('[data-testid="msg-container"]'),
-      ...main.querySelectorAll('.message-in, .message-out')
-    ]);
+      ...main.querySelectorAll('.message-in, .message-out'),
+      ...main.querySelectorAll('[data-testid^="conv-msg-"][data-id]'),
+      ...main.querySelectorAll('[data-id^="true_"], [data-id^="false_"]')
+    ].map(node => node.closest('[data-id]') || node.querySelector('[data-id]') || node));
 
     const now = Date.now();
     const messages = [];
     const occurrence = new Map();
+    const authorDirections = new Map();
+    for (const container of candidates) {
+      const author = senderFromPrePlain(container.querySelector('[data-pre-plain-text]')?.getAttribute('data-pre-plain-text'));
+      const direction = messageDirection(container, container.getAttribute('data-id') || '');
+      if (author && direction !== 'unknown') authorDirections.set(author, direction);
+    }
 
     for (const container of candidates) {
       if (!(container instanceof Element)) continue;
 
       const dataHolder = container.matches('[data-id]') ? container : container.querySelector('[data-id]') || container.closest('[data-id]');
       const dataId = dataHolder?.getAttribute('data-id') || '';
-      const direction = container.classList.contains('message-out') || Boolean(container.closest('.message-out'))
-        ? 'outgoing'
-        : (container.classList.contains('message-in') || Boolean(container.closest('.message-in')) ? 'incoming' : 'unknown');
+      let direction = messageDirection(container, dataId);
 
       const preNode = container.querySelector('[data-pre-plain-text]') || container.closest('[data-pre-plain-text]');
       const prePlain = preNode?.getAttribute('data-pre-plain-text') || '';
       const whatsappTimestamp = parseWhatsAppTimestamp(prePlain);
+      if (direction === 'unknown') direction = authorDirections.get(senderFromPrePlain(prePlain)) || 'unknown';
+      const messageTime = prePlain.match(/\[(\d{1,2}:\d{2}(?::\d{2})?)/)?.[1]
+        || container.querySelector('[data-testid="msg-meta"]')?.textContent?.match(/\b\d{1,2}:\d{2}\b/)?.[0] || '';
 
-      const textNodes = container.querySelectorAll('[data-testid="msg-text"], .selectable-text');
+      const textNodes = container.querySelectorAll('[data-testid="msg-text"], [data-testid="selectable-text"], .selectable-text');
       const parts = [];
       for (const node of textNodes) {
+        if (node.closest('[data-wai-translation]')) continue;
         const text = normalizeWhitespace(node.innerText || node.textContent || '');
         if (text && !parts.includes(text)) parts.push(text);
       }
@@ -235,15 +288,21 @@ export class WhatsAppDom {
       const count = (occurrence.get(baseHash) || 0) + 1;
       occurrence.set(baseHash, count);
 
+      const id = dataId ? `wa:${dataId}` : `fp:${baseHash}:${count}`;
+      const bubble = container.matches('[data-testid="msg-container"]') ? container : container.querySelector('[data-testid="msg-container"]') || container.querySelector('.message-in, .message-out') || container;
+      this.messageElements.set(id, { container: bubble, text });
       messages.push({
-        id: dataId ? `wa:${dataId}` : `fp:${baseHash}:${count}`,
+        id,
         whatsappMessageId: dataId || null,
         fingerprint: simpleHash(base),
         direction,
         senderName,
         type,
         text,
-        whatsappTimestamp: whatsappTimestamp || now,
+        whatsappTimestamp: whatsappTimestamp || 0,
+        messageTime,
+        timestampSource: whatsappTimestamp ? 'whatsapp' : 'unknown-date',
+        rawTimestamp: prePlain,
         capturedAt: now
       });
     }
@@ -269,11 +328,37 @@ export class WhatsAppDom {
     };
   }
 
+  showTranslation(message, text, language) {
+    const entry = this.messageElements?.get(message.id);
+    if (!entry?.container.isConnected || entry.text !== message.text) return false;
+    let translation = entry.container.querySelector('[data-wai-translation]');
+    if (!translation) {
+      translation = document.createElement('div');
+      translation.setAttribute('data-wai-translation', '');
+      entry.container.append(translation);
+    }
+    const label = `Tradução · ${language}\n${text}`;
+    if (translation.textContent !== label) translation.textContent = label;
+    return true;
+  }
+
+  clearTranslations() {
+    document.querySelectorAll('[data-wai-translation]').forEach(node => node.remove());
+  }
+
   observeMutations(handler) {
-    const observer = new MutationObserver(mutations => handler(mutations));
+    const observer = new MutationObserver(mutations => {
+      const relevant = mutations.filter(mutation => {
+        const target = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
+        if (target?.closest('#wai-sidebar, [data-wai-translation]')) return false;
+        const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+        return !nodes.length || nodes.some(node => node.nodeType !== 1 || !node.matches('[data-wai-translation]'));
+      });
+      if (relevant.length) handler(relevant);
+    });
     observer.observe(document.body, { childList: true, subtree: true, attributes: false });
     return () => observer.disconnect();
   }
 }
 
-export const DOM_UTILS = { visible, normalizeWhitespace, jidFromText, phoneFromJid, parseWhatsAppTimestamp, simpleHash };
+export const DOM_UTILS = { visible, normalizeWhitespace, jidFromText, phoneFromJid, parseWhatsAppTimestamp, simpleHash, messageDirection };

@@ -1,4 +1,5 @@
 import { CONFIG } from './config.js';
+import { LANGUAGES, translationSettings } from './ai/translation.js';
 
 function el(tag, options = {}, children = []) {
   const node = document.createElement(tag);
@@ -105,6 +106,7 @@ export class SidebarUI {
 
     const content = el('div', { className: 'wai-content' });
     content.append(
+      this.renderTranslationSection(),
       this.renderSuggestionsSection(),
       this.renderSummarySection(),
       this.renderPromptsSection()
@@ -113,7 +115,7 @@ export class SidebarUI {
 
     const automaticCount = this.prompts.filter(p => p.enabled && p.autoRun).length;
     this.root.append(el('div', { className: 'wai-footer' }, [
-      el('span', { text: this.settings?.aiPaused ? 'IA pausada' : `${automaticCount} prompt(s) automático(s)` }),
+      el('span', { text: this.chatSettings?.aiEnabled !== true ? 'IA desativada nesta conversa' : this.settings?.aiPaused ? 'IA pausada' : `${automaticCount} prompt(s) automático(s)` }),
       el('span', { text: this.keyStatus?.configured ? 'OpenAI ✓' : 'API não configurada' })
     ]));
   }
@@ -127,6 +129,8 @@ export class SidebarUI {
       ]);
     }
 
+    const aiCheck = el('input', { type: 'checkbox', checked: this.chatSettings?.aiEnabled === true, disabled: this.chatSettingsLoading });
+    aiCheck.addEventListener('change', () => this.handlers.onSummarySettings?.({ aiEnabled: aiCheck.checked }));
     return el('div', { className: 'wai-contact' }, [
       el('div', { className: 'wai-contact-name', text: chat.displayName || 'Contato' }),
       el('div', {
@@ -134,14 +138,18 @@ export class SidebarUI {
         text: chat.isGroup
           ? 'Grupo • histórico local separado'
           : `${chat.phone ? `+${chat.phone} • ` : ''}${chat.identityConfidence === 'fallback' ? 'identificação local' : 'conversa identificada'}`
-      })
+      }),
+      el('label', { className: 'wai-check' }, [aiCheck, el('span', { text: chat.isGroup ? 'Usar IA neste grupo' : 'Usar IA neste contato' })])
     ]);
   }
 
   renderSuggestionsSection() {
     const body = el('div');
+    if (this.sendStatus) body.append(el('div', { className: 'wai-help', text: this.sendStatus }));
 
-    if (this.settings?.aiPaused) {
+    if (this.chatSettings?.aiEnabled !== true) {
+      body.append(el('div', { className: 'wai-empty', text: 'IA desativada nesta conversa. Nenhuma nova solicitação de sugestões ou resumos será enviada.' }));
+    } else if (this.settings?.aiPaused) {
       body.append(el('div', { className: 'wai-empty', text: 'A IA está pausada.' }));
     } else if (!this.keyStatus?.configured) {
       body.append(
@@ -155,7 +163,7 @@ export class SidebarUI {
     } else if (!this.suggestions.length) {
       body.append(
         el('div', { className: 'wai-empty', text: 'Digite uma mensagem. Após a pausa configurada, os prompts automáticos aparecerão aqui.' }),
-        el('div', { className: 'wai-shortcuts', text: 'Tab: selecionar • Enter: usar • Esc: cancelar seleção' })
+        el('div', { className: 'wai-shortcuts', text: 'Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar' })
       );
     } else {
       this.suggestions.forEach((item, index) => {
@@ -186,13 +194,14 @@ export class SidebarUI {
           card.append(
             el('div', { className: 'wai-suggestion-text', text: item.text || '' }),
             el('div', { className: 'wai-suggestion-actions' }, [
-              button('Usar', () => this.handlers.onUseSuggestion?.(item), 'small')
+              el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : translationSettings(this.chatSettings).enabled ? 'Traduzir e aplicar' : 'Usar', disabled: this.applyingTranslation || this.sendingSuggestion, onClick: () => this.handlers.onUseSuggestion?.(item) }),
+              el('button', { className: 'wai-btn small', type: 'button', text: this.sendingSuggestion ? 'Enviando…' : 'Aplicar e enviar', title: 'Substitui o rascunho pela sugestão e envia a mensagem ao contato', disabled: this.applyingTranslation || this.sendingSuggestion || item.sendRequested, onClick: () => this.handlers.onSendSuggestion?.(item) })
             ])
           );
         }
         body.append(card);
       });
-      body.append(el('div', { className: 'wai-shortcuts', text: 'Tab/Shift+Tab: navegar • Enter: usar selecionada • Esc: sair da seleção' }));
+      body.append(el('div', { className: 'wai-shortcuts', text: 'Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar a selecionada (ou a primeira pronta). Enter e Shift+Enter continuam sendo do WhatsApp.' }));
     }
 
     return section('Sugestões', body, el('button', {
@@ -231,6 +240,11 @@ export class SidebarUI {
       summaryText ? button('Refazer', () => this.handlers.onGenerateSummary?.(true), 'secondary small') : null
     ]);
     body.append(actions);
+    if (this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true) {
+      for (const action of actions.querySelectorAll('button')) {
+        if (action.textContent !== 'Editar') action.disabled = true;
+      }
+    }
 
     const enabled = this.chatSettings?.summaryEnabled ?? this.settings?.defaultSummaryEnabled ?? true;
     const mode = this.chatSettings?.summaryMode || this.settings?.defaultSummaryMode || 'manual';
@@ -261,6 +275,36 @@ export class SidebarUI {
     return section('Resumo', body);
   }
 
+  renderTranslationSection() {
+    const body = el('div');
+    if (!this.chat) {
+      body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa para configurar os idiomas.' }));
+      return section('Tradução', body);
+    }
+    const translation = translationSettings(this.chatSettings);
+    const enabled = el('input', { type: 'checkbox', checked: translation.enabled, disabled: this.chatSettingsLoading });
+    enabled.addEventListener('change', () => this.handlers.onSummarySettings?.({ translationEnabled: enabled.checked }));
+    body.append(el('label', { className: 'wai-check' }, [enabled, el('span', { text: 'Modo tradução nesta conversa' })]));
+    for (const [key, label] of [['myLanguage', 'Meu idioma'], ['contactLanguage', 'Idioma do contato']]) {
+      const select = el('select', { className: 'wai-select', disabled: this.chatSettingsLoading });
+      for (const [value, text] of Object.entries(LANGUAGES)) {
+        const option = el('option', { value, text });
+        option.selected = translation[key] === value;
+        select.append(option);
+      }
+      select.addEventListener('change', () => this.handlers.onSummarySettings?.({ [key]: select.value }));
+      body.append(field(label, select));
+    }
+    if (translation.enabled) {
+      body.append(el('div', { className: 'wai-help', text: 'As traduções aparecem junto aos balões originais. Revise sugestões no seu idioma; ao aplicar, o texto será traduzido para o contato, sem enviar.' }));
+      const blocked = this.chatSettings?.aiEnabled !== true || this.chatSettingsLoading || this.settings?.aiPaused;
+      body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : 'Traduzir rascunho e aplicar', disabled: blocked || this.applyingTranslation, onClick: () => this.handlers.onTranslateDraft?.() }));
+      body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.translatingBubbles ? 'Traduzindo balões…' : 'Traduzir balões do contato', disabled: blocked || this.translatingBubbles, onClick: () => this.handlers.onRetryTranslations?.() }));
+      body.append(el('div', { className: 'wai-help', text: this.chatSettings?.aiEnabled !== true ? 'Marque “Usar IA” para permitir traduções.' : this.translationStatus || 'Traduções automáticas usam sua API e respeitam os limites de consumo.' }));
+    }
+    return section('Tradução', body);
+  }
+
   renderPromptsSection() {
     const body = el('div');
     if (!this.prompts.length) {
@@ -277,6 +321,7 @@ export class SidebarUI {
           button('✎', () => this.showPromptEditor(prompt), 'secondary small')
         ]);
         body.append(row);
+        row.querySelector('button').disabled = !this.chat || this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true;
       }
     }
 

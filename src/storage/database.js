@@ -1,7 +1,8 @@
 import { DEFAULT_PROMPTS } from '../config.js';
+import { messageStorageId, mergeMessageRecord } from './message-record.js';
 
 const DB_NAME = 'whatsapp_ai_assistant';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 
 function requestPromise(request) {
   return new Promise((resolve, reject) => {
@@ -28,6 +29,12 @@ export async function openDatabase() {
   request.onupgradeneeded = () => {
     const db = request.result;
 
+    if (!db.objectStoreNames.contains('translations')) {
+      const store = db.createObjectStore('translations', { keyPath: 'id' });
+      store.createIndex('chatKey', 'chatKey');
+      store.createIndex('createdAt', 'createdAt');
+    }
+
     if (!db.objectStoreNames.contains('accounts')) {
       const store = db.createObjectStore('accounts', { keyPath: 'id' });
       store.createIndex('lastSeenAt', 'lastSeenAt');
@@ -44,6 +51,10 @@ export async function openDatabase() {
       store.createIndex('chatKey', 'chatKey');
       store.createIndex('capturedAt', 'capturedAt');
       store.createIndex('chatCaptured', ['chatKey', 'capturedAt']);
+    }
+    const messagesStore = request.transaction.objectStore('messages');
+    if (!messagesStore.indexNames.contains('chatTimestamp')) {
+      messagesStore.createIndex('chatTimestamp', ['chatKey', 'whatsappTimestamp']);
     }
 
     if (!db.objectStoreNames.contains('summaries')) {
@@ -187,18 +198,19 @@ export async function upsertMessages(accountId, chatId, messages) {
 
   for (const message of messages) {
     if (!message?.id) continue;
-    const existing = await requestPromise(store.get(message.id));
-    const capturedAt = Number(message.capturedAt) || Date.now();
-    latest = Math.max(latest, Number(message.whatsappTimestamp) || capturedAt);
+    const id = messageStorageId(accountId, chatId, message.id);
+    let existing = await requestPromise(store.get(id));
+    // Upgrade the old unscoped key only when it belongs to this exact chat.
+    if (!existing) {
+      const legacy = await requestPromise(store.get(message.id));
+      if (legacy?.accountId === accountId && legacy?.chatId === chatId) {
+        existing = legacy;
+        store.delete(message.id);
+      }
+    }
+    latest = Math.max(latest, Number(message.whatsappTimestamp) || 0);
     if (!existing) inserted += 1;
-    store.put({
-      ...existing,
-      ...message,
-      accountId,
-      chatId,
-      chatKey: key,
-      capturedAt: existing?.capturedAt || capturedAt
-    });
+    store.put(mergeMessageRecord(existing, message, accountId, chatId));
   }
 
   if (latest) {
@@ -215,7 +227,7 @@ export async function getRecentMessages(accountId, chatId, count = 6) {
   const db = await openDatabase();
   const key = chatKey(accountId, chatId);
   const tx = db.transaction('messages', 'readonly');
-  const index = tx.objectStore('messages').index('chatCaptured');
+  const index = tx.objectStore('messages').index('chatTimestamp');
   const range = IDBKeyRange.bound([key, 0], [key, Number.MAX_SAFE_INTEGER]);
   const items = [];
 
@@ -413,13 +425,39 @@ export async function putCache(value) {
   await txDone(tx);
 }
 
+export async function getTranslation(id) {
+  const db = await openDatabase();
+  const tx = db.transaction('translations', 'readonly');
+  const value = await requestPromise(tx.objectStore('translations').get(id));
+  await txDone(tx);
+  return value || null;
+}
+
+export async function saveTranslation(value) {
+  const db = await openDatabase();
+  const tx = db.transaction('translations', 'readwrite');
+  tx.objectStore('translations').put({ ...value, chatKey: chatKey(value.accountId, value.chatId) });
+  await txDone(tx);
+}
+
 export async function cleanup(retentionDays = 90) {
   const db = await openDatabase();
   const now = Date.now();
   const cutoff = retentionDays > 0 ? now - retentionDays * 86400000 : 0;
-  const tx = db.transaction(['messages', 'suggestion_cache'], 'readwrite');
+  const tx = db.transaction(['messages', 'translations', 'suggestion_cache'], 'readwrite');
 
   if (cutoff) {
+    const translationIndex = tx.objectStore('translations').index('createdAt');
+    await new Promise((resolve, reject) => {
+      const req = translationIndex.openCursor(IDBKeyRange.upperBound(cutoff, true));
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return resolve();
+        cursor.delete();
+        cursor.continue();
+      };
+    });
     const messagesIndex = tx.objectStore('messages').index('capturedAt');
     const range = IDBKeyRange.upperBound(cutoff, true);
     await new Promise((resolve, reject) => {
@@ -452,10 +490,10 @@ export async function cleanup(retentionDays = 90) {
 export async function clearData(kind, accountId = null, chatId = null) {
   const db = await openDatabase();
   const storesByKind = {
-    history: ['messages'],
+    history: ['messages', 'translations'],
     summaries: ['summaries'],
     prompts: ['prompts'],
-    all: ['accounts', 'chats', 'messages', 'summaries', 'chat_settings', 'prompts', 'usage', 'suggestion_cache', 'meta']
+    all: ['accounts', 'chats', 'messages', 'translations', 'summaries', 'chat_settings', 'prompts', 'usage', 'suggestion_cache', 'meta']
   };
   const stores = storesByKind[kind];
   if (!stores) throw new Error('Tipo de limpeza inválido');
@@ -464,17 +502,19 @@ export async function clearData(kind, accountId = null, chatId = null) {
 
   if (kind === 'history' && accountId && chatId) {
     const key = chatKey(accountId, chatId);
-    const index = tx.objectStore('messages').index('chatKey');
-    await new Promise((resolve, reject) => {
-      const req = index.openCursor(IDBKeyRange.only(key));
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (!cursor) return resolve();
-        cursor.delete();
-        cursor.continue();
-      };
-    });
+    for (const name of stores) {
+      const index = tx.objectStore(name).index('chatKey');
+      await new Promise((resolve, reject) => {
+        const req = index.openCursor(IDBKeyRange.only(key));
+        req.onerror = () => reject(req.error);
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return resolve();
+          cursor.delete();
+          cursor.continue();
+        };
+      });
+    }
   } else {
     for (const name of stores) tx.objectStore(name).clear();
   }

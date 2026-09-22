@@ -7,12 +7,15 @@ O projeto é **local-first e BYOK (Bring Your Own Key)**: não existe backend pr
 ## Funcionalidades
 
 - Barra lateral fixa à direita do WhatsApp Web.
+- Checkbox **Usar IA neste contato** (ou grupo), salvo por conta e conversa. Desmarcar bloqueia sugestões e resumos, manuais e automáticos, incluindo chamadas ainda na fila. Chamadas já enviadas não podem ser desfeitas. Por padrão, a opção vem desmarcada: a IA só funciona após habilitação explícita naquela conversa.
 - Oculta automaticamente a barra quando o WhatsApp abre imagem, vídeo, documento ou outro visualizador e restaura ao fechar.
 - Detecta o rascunho digitado e, por padrão, espera 5 segundos sem alterações.
 - Vários prompts configuráveis pelo usuário.
 - Vários resultados de IA no mesmo ciclo.
 - `Tab` / `Shift+Tab` percorrem sugestões.
-- `Enter` aplica a sugestão selecionada sem enviar a mensagem.
+- `Enter` e `Shift+Enter` não são interceptados: continuam enviando e quebrando linha no WhatsApp, respectivamente.
+- `Ctrl+Enter` aplica e envia a sugestão selecionada (ou a primeira pronta se nenhuma estiver selecionada), com o foco no campo de mensagem. No modo tradução, traduz antes de enviar. Manter as teclas pressionadas não repete o envio.
+- **Aplicar e enviar**, em cada sugestão, substitui o rascunho e aciona o envio no WhatsApp mediante clique explícito. No modo tradução, traduz primeiro para o idioma do contato. Os botões **Usar / Traduzir e aplicar** apenas preenchem o campo para revisão.
 - `Alt+1..9` aplica diretamente uma sugestão pronta.
 - A IA **nunca envia a mensagem automaticamente**.
 - Histórico observado armazenado localmente em IndexedDB.
@@ -114,6 +117,20 @@ O service worker é a fronteira confiável. O content script nunca recebe a API 
 
 ## Histórico
 
+### Modo tradução por conversa
+
+Na barra lateral, marque **Usar IA neste contato**, configure **Meu idioma** e **Idioma do contato** e ative **Modo tradução nesta conversa**. Ambos os modos começam desativados.
+
+- As mensagens recebidas ganham uma tradução junto ao balão, sem modificar o original do WhatsApp.
+- Sugestões são geradas no seu idioma. **Traduzir e aplicar** traduz a sugestão para o idioma do contato e preenche o campo; não envia a mensagem.
+- **Traduzir rascunho e aplicar** faz o mesmo com o texto digitado, sem precisar executar um prompt.
+- Originais e traduções ficam no IndexedDB local quando **Salvar histórico** está habilitado. Traduções de rascunhos são guardadas como traduções, não como mensagens enviadas.
+- Traduções salvas são reutilizadas. Texto editado, idioma ou modelo diferente gera uma nova tradução.
+- Para limitar consumo, a tradução automática considera as 20 mensagens recebidas mais recentes carregadas na conversa, usa a fila e os limites automáticos existentes e para após erro. **Traduzir balões do contato** reconcilia todas as mensagens carregadas (antigas ou novas, recebidas e enviadas) com o histórico antes de traduzir os textos recebidos. O status informa progresso, conclusão ou motivo do bloqueio.
+- A extensão traduz texto e legendas, não o conteúdo de áudio, imagens ou documentos. A detecção dos balões depende do DOM do WhatsApp.
+- Desativar a IA ou o modo tradução impede novas traduções. Alterar o rascunho ou trocar de conversa durante uma tradução impede a aplicação do resultado antigo.
+- Limpar histórico também apaga as traduções; elas seguem o prazo de retenção do histórico. Sem salvar histórico, não há persistência das traduções entre sessões.
+
 O histórico é o **histórico observado pela extensão**, não um backup oficial do WhatsApp.
 
 Quando uma conversa é aberta:
@@ -124,6 +141,8 @@ Quando uma conversa é aberta:
 4. a extensão não rola a conversa automaticamente para buscar histórico antigo.
 
 Se o WhatsApp fornecer um ID de mensagem, ele é usado. Caso contrário, existe um fingerprint local com tratamento de ocorrências repetidas.
+
+Cada registro é identificado pela combinação de conta, conversa e ID da mensagem. A extensão guarda `whatsappTimestamp` (data/hora original), `messageTime` (horário exibido), `rawTimestamp` (metadado original), `capturedAt` (primeira leitura) e `lastObservedAt` (última leitura). Relê-los não cria duplicatas; mensagens distintas no mesmo minuto continuam separadas pelo ID. Quando só há horário e não há data confiável, a data fica desconhecida, em vez de usar o horário da leitura como se fosse o de envio. O contexto recente usa a ordem da data/hora original.
 
 ## Identificação da conta
 
