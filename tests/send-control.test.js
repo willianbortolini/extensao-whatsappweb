@@ -149,3 +149,94 @@ test('envio revalida conversa e texto imediatamente antes do clique', async () =
   assert.equal(clicks, 0);
 });
 
+test('setDraft usa selectAll + insertText para substituir completamente o rascunho', () => {
+  const previous = {
+    document: globalThis.document,
+    window: globalThis.window,
+    InputEvent: globalThis.InputEvent,
+    Event: globalThis.Event
+  };
+  const commands = [];
+  const events = [];
+  const composer = {
+    textContent: 'texto antigo',
+    innerText: 'texto antigo',
+    focus() {},
+    dispatchEvent(event) { events.push(event.type); },
+  };
+
+  globalThis.InputEvent = class {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.Event = class {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.window = {
+    getSelection: () => ({
+      removeAllRanges() {},
+      addRange() {}
+    })
+  };
+  globalThis.document = {
+    execCommand(command, _ui, value) {
+      commands.push([command, value]);
+      if (command === 'selectAll') return true;
+      if (command === 'insertText') {
+        composer.textContent = value;
+        composer.innerText = value;
+        return true;
+      }
+      return false;
+    },
+    createRange: () => ({
+      selectNodeContents() {},
+      collapse() {}
+    })
+  };
+
+  const dom = new WhatsAppDom();
+  dom.getComposer = () => composer;
+
+  try {
+    assert.equal(dom.setDraft('Sugestão nova'), true);
+    assert.deepEqual(commands, [['selectAll', null], ['insertText', 'Sugestão nova']]);
+    assert.equal(composer.textContent, 'Sugestão nova');
+    assert.ok(events.includes('input'));
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('sendDraft usa Enter como fallback e só confirma envio quando o WhatsApp limpa o campo', async () => {
+  const previous = { KeyboardEvent: globalThis.KeyboardEvent };
+  let draft = 'Sugestão';
+  const dispatched = [];
+  globalThis.KeyboardEvent = class {
+    constructor(type) { this.type = type; }
+  };
+
+  const composer = {
+    focus() {},
+    dispatchEvent(event) {
+      dispatched.push(event.type);
+      if (event.type === 'keydown') draft = '';
+    }
+  };
+
+  const dom = new WhatsAppDom();
+  dom.getComposer = () => composer;
+  dom.findSendButton = () => null;
+  dom.readConversation = () => ({ whatsappChatId: 'chat' });
+  dom.readDraft = () => draft;
+
+  try {
+    assert.equal(await dom.sendDraft('Sugestão', 'chat'), true);
+    assert.deepEqual(dispatched.slice(0, 3), ['keydown', 'keypress', 'keyup']);
+  } finally {
+    if (previous.KeyboardEvent === undefined) delete globalThis.KeyboardEvent;
+    else globalThis.KeyboardEvent = previous.KeyboardEvent;
+  }
+});
+

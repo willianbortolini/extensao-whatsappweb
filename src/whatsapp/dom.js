@@ -163,37 +163,49 @@ export class WhatsAppDom {
     const value = String(text || '');
 
     composer.focus();
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(composer);
-    selection.removeAllRanges();
-    selection.addRange(range);
 
+    // Use the browser editing commands WhatsApp/Lexical already listens to.
+    // Selecting with a DOM Range can visually replace the text without updating
+    // WhatsApp's internal editor state, which leaves the send action unavailable.
+    let selected = false;
     let inserted = false;
     try {
+      selected = document.execCommand('selectAll', false, null);
       inserted = document.execCommand('insertText', false, value);
     } catch {}
 
     if (!inserted) {
-      composer.textContent = value;
-      try {
-        composer.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          inputType: 'insertText',
-          data: value
-        }));
-      } catch {
-        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      const selection = window.getSelection?.();
+      const range = document.createRange?.();
+      if (selection && range) {
+        range.selectNodeContents(composer);
+        selection.removeAllRanges();
+        selection.addRange(range);
       }
+      composer.textContent = value;
     }
 
-    const finalRange = document.createRange();
-    finalRange.selectNodeContents(composer);
-    finalRange.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(finalRange);
-    composer.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
+    try {
+      composer.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: value
+      }));
+    } catch {
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // Keep the caret at the end for the normal "Usar" action.
+    try {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(composer);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {}
+
+    return normalizeWhitespace(composer.innerText || composer.textContent || '') === normalizeWhitespace(value);
   }
 
   findSendButton(composer = this.getComposer()) {
@@ -263,10 +275,47 @@ export class WhatsAppDom {
         if (this.readConversation()?.whatsappChatId !== chatId) return false;
         if (this.readDraft() !== normalizedExpected) return false;
         button.click();
-        return true;
+
+        // A successful WhatsApp send clears the composer. Give React/Lexical a
+        // short moment to commit that state before considering the action done.
+        for (let verify = 0; verify < 10; verify++) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          if (this.readConversation()?.whatsappChatId !== chatId) return true;
+          if (!this.readDraft()) return true;
+        }
       }
 
-      // The composer may need another render before its send button appears.
+      // If the current WhatsApp build does not expose a stable send-button
+      // selector, use the same Enter action a user would trigger in the focused
+      // composer. We only accept it as sent if WhatsApp itself clears the draft.
+      const composer = this.getComposer();
+      if (composer && attempt >= 2) {
+        if (!stillAllowed()) return false;
+        if (this.readConversation()?.whatsappChatId !== chatId) return false;
+        if (this.readDraft() !== normalizedExpected) return false;
+        composer.focus();
+        try {
+          const options = {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          };
+          composer.dispatchEvent(new KeyboardEvent('keydown', options));
+          composer.dispatchEvent(new KeyboardEvent('keypress', options));
+          composer.dispatchEvent(new KeyboardEvent('keyup', options));
+        } catch {}
+
+        for (let verify = 0; verify < 6; verify++) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          if (this.readConversation()?.whatsappChatId !== chatId) return true;
+          if (!this.readDraft()) return true;
+        }
+      }
+
+      // The composer may need another render before its send button becomes available.
       await new Promise(resolve => setTimeout(resolve, 60));
     }
     return false;

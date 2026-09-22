@@ -561,9 +561,15 @@ export class WhatsAppAIApp {
       }
     }
     if (this.chat !== selectedChat || (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== selectedChat.whatsappChatId)) return;
-    if (!this.dom.setDraft(text)) return;
+    const previousSuppressedDraft = this.suppressedDraft;
+    const previousCurrentDraft = this.currentDraft;
     this.suppressedDraft = text.trim();
     this.currentDraft = text.trim();
+    if (!this.dom.setDraft(text)) {
+      this.suppressedDraft = previousSuppressedDraft;
+      this.currentDraft = previousCurrentDraft;
+      return;
+    }
     this.draftVersion += 1;
     this.invalidateGenerations();
     this.cancelDebounce();
