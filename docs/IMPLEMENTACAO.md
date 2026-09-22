@@ -233,3 +233,98 @@ Enter e Shift+Enter sempre pertencem ao WhatsApp, mesmo com sugestão selecionad
 Novas versões do IndexedDB devem aumentar `DB_VERSION` e adicionar migração em `onupgradeneeded`.
 
 Não limpar dados existentes por conveniência durante upgrades.
+
+
+## Composer e envio de sugestões — bridge MAIN world
+
+A escrita e o envio no composer do WhatsApp não são mais executados diretamente por \`WhatsAppDom\`.
+
+O fluxo é dividido em duas camadas:
+
+\`\`\`text
+content script isolado
+  -> WhatsAppComposerBridge
+  -> window.postMessage
+  -> page-bridge-main.js (world: MAIN)
+  -> editor Lexical do WhatsApp
+\`\`\`
+
+O \`manifest.json\` carrega \`src/whatsapp/page-bridge-main.js\` em \`document_start\` e \`world: "MAIN"\`. O bridge não usa API key, storage, OpenAI nem histórico; ele recebe somente operações de composer.
+
+Operações aceitas:
+
+\`\`\`text
+PING
+DIAGNOSE
+REPLACE
+REPLACE_AND_SEND
+\`\`\`
+
+### Substituição
+
+O caminho primário usa o \`LexicalEditor\` associado ao \`contenteditable\` do composer e tenta carregar o módulo \`Lexical.prod\` da própria página.
+
+A regra é obrigatória:
+
+\`\`\`text
+limpar
+-> confirmar vazio
+-> inserir uma única vez
+-> confirmar DOM e EditorState
+\`\`\`
+
+Nunca ocorre uma segunda inserção sobre um editor sujo.
+
+Se a integração Lexical não estiver acessível, existe apenas um fallback: seleção total do composer + \`ClipboardEvent("paste")\`. O fallback também precisa produzir exatamente o texto esperado; caso contrário, a operação falha.
+
+\`execCommand\` e alteração direta repetida de \`textContent\` não fazem mais parte do fluxo de envio.
+
+### Envio
+
+Depois da substituição, o bridge:
+
+1. confirma que a conversa não mudou;
+2. confirma o texto exato no composer;
+3. encontra o botão real de envio dentro do footer/form atual;
+4. executa \`button.click()\`;
+5. aguarda confirmação pelo composer vazio ou por um novo balão outgoing correspondente.
+
+Não existe fallback por \`KeyboardEvent("Enter")\`.
+
+O clique só é considerado sucesso quando o WhatsApp confirma o envio.
+
+### Erros estruturados
+
+O bridge pode retornar, entre outros:
+
+\`\`\`text
+COMPOSER_NOT_FOUND
+CONVERSATION_NOT_FOUND
+LEXICAL_MODULE_NOT_FOUND
+LEXICAL_EDITOR_NOT_FOUND
+CLEAR_FAILED
+CLEAR_VERIFY_FAILED
+INSERT_FAILED
+TEXT_MISMATCH
+EDITOR_STATE_MISMATCH
+CHAT_CHANGED
+SEND_BUTTON_NOT_FOUND
+SEND_CLICK_FAILED
+SEND_NOT_CONFIRMED
+BRIDGE_TIMEOUT
+\`\`\`
+
+Em erro, a sugestão continua disponível na sidebar.
+
+### Atalhos
+
+\`\`\`text
+Ctrl+Espaço     gera sugestões imediatamente para o rascunho atual
+Ctrl+Enter      aplica e envia a sugestão selecionada ou a primeira pronta
+Tab             próxima sugestão
+Shift+Tab       sugestão anterior
+Esc             remove seleção
+Alt+1..9        aplica a sugestão correspondente
+\`\`\`
+
+\`Ctrl+Enter\` e o botão **Aplicar e enviar** chamam exatamente a mesma transação.

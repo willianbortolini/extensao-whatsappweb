@@ -3,8 +3,13 @@
   "name": "WhatsApp AI Assistant",
   "version": "1.0.0",
   "description": "Assistente local-first de escrita com IA para WhatsApp Web. BYOK: cada usuário usa sua própria chave da OpenAI.",
-  "permissions": ["storage", "unlimitedStorage"],
-  "host_permissions": ["https://api.openai.com/*"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://api.openai.com/*"
+  ],
   "background": {
     "service_worker": "dist/background.js",
     "type": "module"
@@ -12,9 +17,24 @@
   "options_page": "src/options/options.html",
   "content_scripts": [
     {
-      "matches": ["https://web.whatsapp.com/*"],
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "js": [
+        "src/whatsapp/page-bridge-main.js"
+      ]
+    },
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
       "run_at": "document_idle",
-      "js": ["dist/content-script.js", "dist/media-viewer-guard.js"]
+      "js": [
+        "dist/content-script.js",
+        "dist/media-viewer-guard.js"
+      ]
     }
   ],
   "web_accessible_resources": [
@@ -25,7 +45,9 @@
         "src/ai/*.js",
         "src/storage/*.js"
       ],
-      "matches": ["https://web.whatsapp.com/*"]
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ]
     }
   ]
 }

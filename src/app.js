@@ -1,6 +1,7 @@
 import { CONFIG } from './config.js';
 import { sendRuntime, openOptions } from './runtime.js';
 import { WhatsAppDom } from './whatsapp/dom.js';
+import { WhatsAppComposerBridge, normalizeComposerText } from './whatsapp/composer-bridge.js';
 import { SidebarUI } from './ui.js';
 import { injectStyles } from './styles.js';
 import { LANGUAGES, translationSettings } from './ai/translation.js';
@@ -8,6 +9,7 @@ import { LANGUAGES, translationSettings } from './ai/translation.js';
 export class WhatsAppAIApp {
   constructor() {
     this.dom = new WhatsAppDom();
+    this.composerBridge = new WhatsAppComposerBridge();
     this.ui = null;
 
     this.installationId = '';
@@ -547,84 +549,172 @@ export class WhatsAppAIApp {
     return map[result.error] || result.message || 'Não foi possível gerar a sugestão.';
   }
 
-  async useSuggestion(item) {
-    if (!item?.text?.trim() || !this.isChatAIEnabled() || this.applyingTranslation) return;
-    const selectedChat = this.chat;
-    if (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== selectedChat.whatsappChatId) return;
+  composerFailureMessage(result, action = 'concluir a operação') {
+    const messages = {
+      BRIDGE_UNAVAILABLE: 'O bridge do editor do WhatsApp não está disponível. Recarregue a extensão e a página.',
+      BRIDGE_TIMEOUT: 'O editor do WhatsApp não respondeu a tempo. Recarregue a página e tente novamente.',
+      COMPOSER_NOT_FOUND: 'Não foi possível localizar o campo de mensagem desta conversa.',
+      CONVERSATION_NOT_FOUND: 'Não foi possível confirmar a conversa atual.',
+      LEXICAL_MODULE_NOT_FOUND: 'O editor interno do WhatsApp mudou e não pôde ser carregado.',
+      LEXICAL_EDITOR_NOT_FOUND: 'O editor interno desta caixa de mensagem não foi localizado.',
+      CLEAR_FAILED: 'Não foi possível apagar com segurança o texto atual do WhatsApp.',
+      CLEAR_VERIFY_FAILED: 'O WhatsApp não confirmou que o campo ficou vazio.',
+      INSERT_FAILED: 'Não foi possível inserir a sugestão no editor interno do WhatsApp.',
+      PASTE_DISPATCH_FAILED: 'O fallback de inserção do WhatsApp falhou.',
+      TEXT_MISMATCH: 'O texto no campo do WhatsApp ficou diferente da sugestão. Nada foi enviado.',
+      EDITOR_STATE_MISMATCH: 'O estado interno do editor ficou diferente do texto visível. Nada foi enviado.',
+      CHAT_CHANGED: 'A conversa mudou durante a operação. Nada foi enviado.',
+      CHAT_CHANGED_AFTER_CLICK: 'A conversa mudou antes de ser possível confirmar o envio.',
+      SEND_BUTTON_NOT_FOUND: 'A sugestão foi aplicada, mas o botão real de enviar do WhatsApp não foi localizado.',
+      SEND_CLICK_FAILED: 'Não foi possível clicar no botão de enviar do WhatsApp.',
+      SEND_NOT_CONFIRMED: 'O botão foi acionado, mas o WhatsApp não confirmou o envio.',
+      INVALID_TEXT: 'A sugestão não contém um texto válido para aplicar.',
+      BRIDGE_EXCEPTION: 'Ocorreu uma falha interna ao controlar o editor do WhatsApp.'
+    };
+    return messages[result?.stage] || result?.message || ('Não foi possível ' + action + '.');
+  }
+
+  async prepareSuggestionAction(item) {
+    if (!item?.text?.trim() || !this.isChatAIEnabled() || this.applyingTranslation) return null;
+
+    const chat = this.chat;
+    const revision = this.chatSettingsRevision;
+    if (!chat) return null;
+    if (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId) return null;
+
     let text = item.text;
     if (translationSettings(this.chatSettings).enabled) {
-      const chat = this.chat;
       const draft = this.dom.readDraft();
-      const revision = this.chatSettingsRevision;
       this.applyingTranslation = true;
       this.cancelDebounce();
       this.ui.setState({ applyingTranslation: true, translationStatus: 'Traduzindo para o idioma do contato…' });
       try {
         const result = await sendRuntime('TRANSLATE_TEXT', {
-          accountId: chat.accountId, chatId: chat.whatsappChatId,
-          text, direction: 'outgoing'
+          accountId: chat.accountId,
+          chatId: chat.whatsappChatId,
+          text,
+          direction: 'outgoing'
         });
-        if (this.chat !== chat || this.chatSettingsRevision !== revision || !this.isChatAIEnabled()) return;
+
+        if (this.chat !== chat || this.chatSettingsRevision !== revision || !this.isChatAIEnabled()) return null;
         if (!result.ok) {
           this.ui.setState({ translationStatus: this.userError(result) });
-          return;
+          return null;
         }
         if (this.dom.readDraft() !== draft) {
           this.ui.setState({ translationStatus: 'Você alterou o rascunho. A tradução não foi aplicada; tente novamente.' });
-          return;
+          return null;
         }
+
         text = result.text;
-        this.ui.setState({ translationStatus: 'Tradução aplicada. Revise e envie pelo WhatsApp quando quiser.' });
+        this.ui.setState({ translationStatus: 'Tradução pronta para aplicar.' });
       } finally {
         this.applyingTranslation = false;
         this.ui.setState({ applyingTranslation: false });
       }
     }
-    if (this.chat !== selectedChat || (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== selectedChat.whatsappChatId)) return;
+
+    if (
+      this.chat !== chat ||
+      this.chatSettingsRevision !== revision ||
+      !this.isChatAIEnabled() ||
+      (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId)
+    ) {
+      return null;
+    }
+
+    return { text, chat, revision };
+  }
+
+  async useSuggestion(item) {
+    if (this.sendingSuggestion) return false;
+    const prepared = await this.prepareSuggestionAction(item);
+    if (!prepared) return false;
 
     this.replacingDraft = true;
-    let applied = false;
+    let result;
     try {
-      applied = this.dom.setDraft(text);
+      result = await this.composerBridge.replaceText(prepared.text, {
+        chatId: prepared.chat.whatsappChatId
+      });
     } finally {
       this.replacingDraft = false;
     }
-    if (!applied) return;
 
-    this.suppressedDraft = text.trim();
-    this.currentDraft = text.trim();
+    if (!result?.ok) {
+      this.ui.setState({ sendStatus: this.composerFailureMessage(result, 'aplicar a sugestão') });
+      return false;
+    }
+
+    if (
+      this.chat !== prepared.chat ||
+      this.chatSettingsRevision !== prepared.revision ||
+      !this.isChatAIEnabled() ||
+      (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== prepared.chat.whatsappChatId)
+    ) {
+      return false;
+    }
+
+    const actualDraft = this.dom.readDraft();
+    if (!normalizeComposerText(actualDraft) || normalizeComposerText(actualDraft) !== normalizeComposerText(prepared.text)) {
+      this.ui.setState({ sendStatus: 'O WhatsApp não confirmou o texto exato da sugestão. Nada foi enviado.' });
+      return false;
+    }
+
+    this.suppressedDraft = actualDraft;
+    this.currentDraft = actualDraft;
     this.draftVersion += 1;
     this.invalidateGenerations();
     this.cancelDebounce();
     this.ui.clearSelection();
+    this.ui.setState({ sendStatus: 'Sugestão aplicada no campo do WhatsApp.' });
     return true;
   }
 
   async applyAndSendSuggestion(item) {
-    if (!item?.text || !this.isChatAIEnabled() || this.sendingSuggestion || this.applyingTranslation || item.sendRequested) return;
-    const chat = this.chat;
-    const revision = this.chatSettingsRevision;
-    if (this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId) return;
+    if (!item?.text?.trim() || !this.isChatAIEnabled() || this.sendingSuggestion || this.applyingTranslation || item.sendRequested) return false;
+
     this.sendingSuggestion = true;
-    this.ui.setState({ sendingSuggestion: true, sendStatus: 'Preparando sugestão para enviar…' });
+    this.cancelDebounce();
+    this.ui.setState({ sendingSuggestion: true, sendStatus: 'Substituindo o texto e enviando pelo WhatsApp…' });
+
     try {
-      const applied = await this.useSuggestion(item);
-      if (!applied || this.chat !== chat || this.chatSettingsRevision !== revision || !this.isChatAIEnabled()) {
-        this.ui.setState({ sendStatus: 'Envio cancelado. Confira a conversa e o rascunho antes de tentar novamente.' });
-        return;
+      const prepared = await this.prepareSuggestionAction(item);
+      if (!prepared) {
+        this.ui.setState({ sendStatus: 'Envio cancelado. A conversa ou o rascunho mudou durante a operação.' });
+        return false;
       }
-      const expectedText = this.currentDraft;
-      const sent = await this.dom.sendDraft(expectedText, chat.whatsappChatId,
-        () => this.chat === chat && this.chatSettingsRevision === revision && this.isChatAIEnabled());
-      if (!sent) {
-        this.ui.setState({ sendStatus: 'Não foi possível acionar o envio com segurança. Confira o texto no campo e envie pelo WhatsApp.' });
-        return;
+
+      this.replacingDraft = true;
+      let result;
+      try {
+        result = await this.composerBridge.replaceAndSend(prepared.text, {
+          chatId: prepared.chat.whatsappChatId
+        });
+      } finally {
+        this.replacingDraft = false;
       }
+
+      if (!result?.ok) {
+        this.ui.setState({ sendStatus: this.composerFailureMessage(result, 'substituir e enviar a sugestão') });
+        return false;
+      }
+
       item.sendRequested = true;
+      this.currentDraft = this.dom.readDraft();
+      this.suppressedDraft = null;
+      this.lastAutoDraft = null;
+      this.draftVersion += 1;
+      this.invalidateGenerations();
+      this.cancelDebounce();
       this.ui.clearSuggestions();
-      this.ui.setState({ sendStatus: 'Envio acionado no WhatsApp.' });
-    } catch {
-      this.ui.setState({ sendStatus: 'Não foi possível concluir o envio. Confira a conversa antes de tentar novamente.' });
+      this.ui.setState({ sendStatus: 'Mensagem enviada pelo WhatsApp.' });
+      return true;
+    } catch (error) {
+      this.ui.setState({
+        sendStatus: 'Não foi possível concluir o envio: ' + (error?.message || 'erro inesperado no editor do WhatsApp.')
+      });
+      return false;
     } finally {
       this.sendingSuggestion = false;
       this.ui.setState({ sendingSuggestion: false });

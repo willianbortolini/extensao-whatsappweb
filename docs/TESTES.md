@@ -152,3 +152,30 @@ No DevTools:
 - chamadas manuais continuam sob ação explícita;
 - `max_output_tokens` é enviado;
 - `store=false` é enviado.
+
+
+## Composer Lexical / envio — regressão obrigatória
+
+Além dos testes gerais, executar estes casos no WhatsApp Web autenticado:
+
+- digitar \`teste envio\`, selecionar a sugestão \`Mensagem de teste.\` e usar **Usar**; o composer deve conter somente \`Mensagem de teste.\`;
+- repetir com **Aplicar e enviar**; o texto antigo deve desaparecer, a sugestão deve aparecer e a mensagem deve ser enviada;
+- repetir com **Ctrl+Enter**; o resultado deve ser idêntico ao botão;
+- confirmar que nunca aparece \`Mensagem de teste.Mensagem de teste.teste envio\` nem qualquer outra concatenação;
+- sugestão com múltiplas linhas preserva as linhas;
+- sugestão com emoji e acentos preserva o conteúdo;
+- ausência do botão de envio retorna erro e mantém a sugestão;
+- clique no botão sem composer vazio/balão outgoing retorna \`SEND_NOT_CONFIRMED\`;
+- troca de conversa durante a transação cancela o envio;
+- falha da integração Lexical tenta somente o fallback de paste;
+- o fallback também precisa validar texto exato antes de enviar.
+
+Os testes automatizados específicos ficam em:
+
+\`\`\`text
+tests/composer-bridge.test.js
+tests/page-bridge.test.js
+tests/send-control.test.js
+tests/send-suggestion.test.js
+tests/translation-apply.test.js
+\`\`\`
