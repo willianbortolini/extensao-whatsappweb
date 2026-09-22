@@ -280,3 +280,19 @@ tests/translation-apply.test.js
 - trocar de conversa recarrega a lista e invalida gerações anteriores;
 - Sugerir mensagem mostra somente prompts permitidos para a conversa;
 - tradução e `finalText` continuam iguais para prompts globais e específicos.
+
+
+## Sidebar compacta — regressões
+
+- Tradução desligada não renderiza seletores de idioma nem ações manuais;
+- Tradução ligada/recolhida mostra apenas o par de idiomas;
+- Tradução expandida mostra os controles;
+- Resumo recolhido não renderiza conteúdo completo nem configurações;
+- Resumo aberto mostra conteúdo, mantendo configurações avançadas recolhidas;
+- Configurações do resumo abertas mostram modo/frequência;
+- Nenhum estado do resumo pode renderizar o texto literal `null`;
+- Prompts recolhidos não renderizam a lista;
+- Prompts expandidos mostram globais e específicos;
+- Estado de expansão sobrevive a `setState()/render()`;
+- Fechar o resumo também fecha `summarySettings`;
+- helpers compactos informam corretamente resumo, tradução e contagem de prompts.

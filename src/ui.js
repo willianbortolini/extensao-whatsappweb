@@ -33,6 +33,58 @@ function section(title, body, action = null) {
   return root;
 }
 
+export function appendPresent(parent, ...children) {
+  children.filter(Boolean).forEach(child => parent.append(child));
+  return parent;
+}
+
+export function summaryCompactStatus(summary) {
+  if (!summary?.summary?.trim()) return 'Não criado';
+  const pending = Math.max(0, Number(summary.messagesSinceSummary) || 0);
+  return pending > 0 ? `+${pending} nova${pending === 1 ? '' : 's'}` : '✓ Atualizado';
+}
+
+export function promptsCompactStatus(prompts = []) {
+  const enabled = prompts.filter(prompt => prompt.enabled);
+  const automatic = enabled.filter(prompt => prompt.autoRun).length;
+  const local = enabled.filter(prompt => prompt.scope === PROMPT_SCOPE.CHAT).length;
+  if (local > 0) return `${automatic} auto • ${local} aqui`;
+  return `${automatic} auto`;
+}
+
+export function translationCompactState(settings, expanded = false) {
+  const translation = translationSettings(settings);
+  return {
+    enabled: translation.enabled,
+    showDetails: Boolean(translation.enabled && expanded),
+    summary: translation.enabled
+      ? `${LANGUAGES[translation.myLanguage] || translation.myLanguage} → ${LANGUAGES[translation.contactLanguage] || translation.contactLanguage}`
+      : 'Desativada'
+  };
+}
+
+function collapsibleSection({ title, summary = '', expanded = false, onToggle, body = null, action = null, disabled = false }) {
+  const root = el('section', { className: `wai-section wai-collapsible${expanded ? ' expanded' : ''}` });
+  const head = el('div', { className: 'wai-section-head wai-section-head-compact' });
+  const toggle = el('button', {
+    className: 'wai-section-toggle',
+    type: 'button',
+    disabled,
+    onClick: () => {
+      if (!disabled) onToggle?.();
+    }
+  }, [
+    el('div', { className: 'wai-section-title', text: title }),
+    el('div', { className: 'wai-section-compact-summary', text: summary }),
+    el('span', { className: 'wai-chevron', text: disabled ? '' : (expanded ? '▴' : '▾') })
+  ]);
+  head.append(toggle);
+  if (action) head.append(action);
+  root.append(head);
+  if (expanded && body) root.append(el('div', { className: 'wai-section-body' }, [body]));
+  return root;
+}
+
 function field(label, input, help = '') {
   const wrap = el('div', { className: 'wai-field' }, [
     el('label', { text: label }),
@@ -59,6 +111,12 @@ export class SidebarUI {
     this.summary = null;
     this.chatSettings = null;
     this.keyStatus = null;
+    this.expandedSections = {
+      translation: false,
+      summary: false,
+      summarySettings: false,
+      prompts: false
+    };
   }
 
   mount() {
@@ -90,6 +148,16 @@ export class SidebarUI {
     this.render();
   }
 
+  toggleSection(name, force = null) {
+    if (!(name in this.expandedSections)) return false;
+    this.expandedSections[name] = force == null ? !this.expandedSections[name] : Boolean(force);
+    if (name === 'summary' && !this.expandedSections.summary) {
+      this.expandedSections.summarySettings = false;
+    }
+    this.render();
+    return this.expandedSections[name];
+  }
+
   render() {
     if (!this.root) return;
     this.root.replaceChildren();
@@ -110,9 +178,9 @@ export class SidebarUI {
 
     const content = el('div', { className: 'wai-content' });
     content.append(
-      this.renderTranslationSection(),
       this.renderSuggestionsSection(),
       this.renderSuggestedMessageSection(),
+      this.renderTranslationSection(),
       this.renderSummarySection(),
       this.renderPromptsSection()
     );
@@ -134,17 +202,22 @@ export class SidebarUI {
       ]);
     }
 
-    const aiCheck = el('input', { type: 'checkbox', checked: this.chatSettings?.aiEnabled === true, disabled: this.chatSettingsLoading });
+    const aiCheck = el('input', {
+      type: 'checkbox',
+      checked: this.chatSettings?.aiEnabled === true,
+      disabled: this.chatSettingsLoading
+    });
     aiCheck.addEventListener('change', () => this.handlers.onSummarySettings?.({ aiEnabled: aiCheck.checked }));
-    return el('div', { className: 'wai-contact' }, [
+
+    return el('div', { className: 'wai-contact wai-contact-compact' }, [
       el('div', { className: 'wai-contact-name', text: chat.displayName || 'Contato' }),
-      el('div', {
-        className: 'wai-contact-meta',
-        text: chat.isGroup
-          ? 'Grupo • histórico local separado'
-          : `${chat.phone ? `+${chat.phone} • ` : ''}${chat.identityConfidence === 'fallback' ? 'identificação local' : 'conversa identificada'}`
-      }),
-      el('label', { className: 'wai-check' }, [aiCheck, el('span', { text: chat.isGroup ? 'Usar IA neste grupo' : 'Usar IA neste contato' })])
+      el('label', {
+        className: 'wai-check wai-ai-toggle',
+        title: chat.isGroup ? 'Usar IA neste grupo' : 'Usar IA neste contato'
+      }, [
+        aiCheck,
+        el('span', { text: 'IA' })
+      ])
     ]);
   }
 
@@ -167,8 +240,8 @@ export class SidebarUI {
       body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa para usar a IA.' }));
     } else if (!this.suggestions.length) {
       body.append(
-        el('div', { className: 'wai-empty', text: 'Digite uma mensagem. Após a pausa configurada, os prompts automáticos aparecerão aqui.' }),
-        el('div', { className: 'wai-shortcuts', text: 'Ctrl+Espaço: gerar agora • Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar' })
+        el('div', { className: 'wai-empty', text: 'Digite uma mensagem para receber sugestões.' }),
+        el('div', { className: 'wai-shortcuts', text: 'Ctrl+Espaço gera agora' })
       );
     } else {
       this.suggestions.forEach((item, index) => {
@@ -224,20 +297,27 @@ export class SidebarUI {
         }
         body.append(card);
       });
-      body.append(el('div', { className: 'wai-shortcuts', text: 'Ctrl+Espaço: gerar agora • Tab: trocar sugestão • Ctrl+Enter: aplicar e enviar a selecionada (ou a primeira pronta). Enter e Shift+Enter continuam sendo do WhatsApp.' }));
+      body.append(el('div', { className: 'wai-shortcuts', text: 'Tab alterna • Ctrl+Enter aplica e envia' }));
     }
 
-    return section('Sugestões', body, el('button', {
+    const root = section('Sugestões', body, el('button', {
       className: 'wai-icon',
       type: 'button',
       text: this.settings?.aiPaused ? '▶' : 'Ⅱ',
       title: this.settings?.aiPaused ? 'Retomar IA' : 'Pausar IA',
       onClick: () => this.handlers.onPauseToggle?.()
     }));
+    root.classList.add('wai-primary-section');
+    return root;
   }
 
   renderSuggestedMessageSection() {
     const body = el('div');
+    const primarySection = () => {
+      const root = section('Sugerir mensagem', body);
+      root.classList.add('wai-primary-section');
+      return root;
+    };
 
     if (this.suggestedMessageStatus) {
       body.append(el('div', { className: 'wai-help', text: this.suggestedMessageStatus }));
@@ -245,17 +325,17 @@ export class SidebarUI {
 
     if (!this.chat) {
       body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa para sugerir uma mensagem.' }));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     if (this.chatSettings?.aiEnabled !== true) {
       body.append(el('div', { className: 'wai-empty', text: 'Ative “Usar IA” nesta conversa para sugerir uma mensagem.' }));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     if (this.settings?.aiPaused) {
       body.append(el('div', { className: 'wai-empty', text: 'A IA está pausada.' }));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     if (!this.keyStatus?.configured) {
@@ -265,7 +345,7 @@ export class SidebarUI {
           button('Configurar API', () => this.handlers.onOpenOptions?.(), 'secondary small')
         ])
       );
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     const summaryText = this.summary?.summary || '';
@@ -276,13 +356,13 @@ export class SidebarUI {
           button('Gerar resumo', () => this.handlers.onGenerateSummary?.(false), 'small')
         ])
       );
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     const enabledPrompts = this.prompts.filter(prompt => prompt.enabled);
     if (!enabledPrompts.length) {
       body.append(el('div', { className: 'wai-empty', text: 'Nenhum prompt habilitado está disponível.' }));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     const promptSelect = el('select', {
@@ -290,23 +370,21 @@ export class SidebarUI {
       disabled: this.chatSettingsLoading || Boolean(this.suggestedMessage && ['generating', 'translating'].includes(this.suggestedMessage.status))
     });
     for (const prompt of enabledPrompts) {
-      const scopeLabel = prompt.scope === PROMPT_SCOPE.CHAT
-        ? `Esta conversa · ${this.chat?.displayName || prompt.chatDisplayName || 'Contato'}`
-        : 'Global';
-      const option = el('option', { value: prompt.id, text: `${prompt.name} · ${scopeLabel}` });
+      const scopeLabel = prompt.scope === PROMPT_SCOPE.CHAT ? '👤' : '🌐';
+      const option = el('option', { value: prompt.id, text: `${scopeLabel} ${prompt.name}` });
       if (prompt.id === this.suggestedMessagePromptId) option.selected = true;
       promptSelect.append(option);
     }
     promptSelect.addEventListener('change', () => this.handlers.onSuggestedMessagePromptChange?.(promptSelect.value));
-    body.append(field('Prompt', promptSelect, 'O resumo da conversa é sempre usado. Mensagens recentes entram quando o prompt estiver configurado para incluí-las.'));
+    body.append(field('Prompt', promptSelect));
 
     const pending = Number(this.summary?.messagesSinceSummary) || 0;
-    body.append(el('div', {
-      className: 'wai-help',
-      text: pending > 0
-        ? `Resumo versão ${this.summary?.summaryVersion || 0} • ${pending} mensagem(ns) nova(s) ainda não incorporada(s). Você pode atualizar o resumo antes de gerar.`
-        : `Resumo versão ${this.summary?.summaryVersion || 0} disponível para gerar a mensagem.`
-    }));
+    if (pending > 0) {
+      body.append(el('div', {
+        className: 'wai-summary-warning',
+        text: `⚠ ${pending} mensagem(ns) nova(s) ainda não incorporada(s) ao resumo.`
+      }));
+    }
 
     const item = this.suggestedMessage;
     if (!item) {
@@ -314,7 +392,7 @@ export class SidebarUI {
         button('Sugerir mensagem', () => this.handlers.onGenerateSuggestedMessage?.(false), 'small'),
         pending > 0 ? button('Atualizar resumo', () => this.handlers.onGenerateSummary?.(false), 'secondary small') : null
       ]));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     if (item.status === 'generating' || item.status === 'translating') {
@@ -326,7 +404,7 @@ export class SidebarUI {
             : 'Gerando mensagem com base no resumo…'
         })
       ]));
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     if (item.status === 'error') {
@@ -336,7 +414,7 @@ export class SidebarUI {
           button('Tentar novamente', () => this.handlers.onRetrySuggestedMessage?.(), 'secondary small')
         ])
       );
-      return section('Sugerir mensagem', body);
+      return primarySection();
     }
 
     const finalText = finalSuggestionTextForChat(item, this.chatSettings, this.chat);
@@ -368,36 +446,47 @@ export class SidebarUI {
       button('Gerar outra', () => this.handlers.onGenerateSuggestedMessage?.(true), 'secondary small')
     ]));
 
-    return section('Sugerir mensagem', body);
+    return primarySection();
   }
 
   renderSummarySection() {
-    const body = el('div');
-    if (!this.chat) {
-      body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa.' }));
-      return section('Resumo', body);
+    const expanded = Boolean(this.expandedSections.summary);
+    const summaryText = this.summary?.summary || '';
+    const status = this.chat ? summaryCompactStatus(this.summary) : 'Sem conversa';
+
+    if (!expanded) {
+      return collapsibleSection({
+        title: '📝 Resumo',
+        summary: status,
+        expanded: false,
+        disabled: !this.chat,
+        onToggle: () => this.toggleSection('summary')
+      });
     }
 
-    const summaryText = this.summary?.summary || '';
+    const body = el('div');
     body.append(el('div', {
       className: summaryText ? 'wai-summary' : 'wai-empty',
       text: summaryText || 'Ainda não existe resumo desta conversa.'
     }));
 
     if (this.summary?.updatedAt) {
-      const pending = this.summary.messagesSinceSummary || 0;
+      const pending = Math.max(0, Number(this.summary.messagesSinceSummary) || 0);
       body.append(el('div', {
         className: 'wai-help',
-        text: `Versão ${this.summary.summaryVersion || 0} • ${pending} mensagem(ns) nova(s) desde o resumo`
+        text: `Versão ${this.summary.summaryVersion || 0}${pending > 0 ? ` • ${pending} nova(s)` : ''}`
       }));
     }
 
-    const actions = el('div', { className: 'wai-actions' }, [
+    const actions = el('div', { className: 'wai-actions wai-summary-actions' });
+    appendPresent(
+      actions,
       button(summaryText ? 'Atualizar' : 'Gerar resumo', () => this.handlers.onGenerateSummary?.(false), 'small'),
       summaryText ? button('Editar', () => this.showSummaryEditor(), 'secondary small') : null,
       summaryText ? button('Refazer', () => this.handlers.onGenerateSummary?.(true), 'secondary small') : null
-    ]);
+    );
     body.append(actions);
+
     if (this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true) {
       for (const action of actions.querySelectorAll('button')) {
         if (action.textContent !== 'Editar') action.disabled = true;
@@ -407,42 +496,115 @@ export class SidebarUI {
     const enabled = this.chatSettings?.summaryEnabled ?? this.settings?.defaultSummaryEnabled ?? true;
     const mode = this.chatSettings?.summaryMode || this.settings?.defaultSummaryMode || 'manual';
     const every = this.chatSettings?.summaryEvery || this.settings?.defaultSummaryEvery || 2;
+    const modeLabel = { manual: 'Manual', automatic: 'Automático', disabled: 'Desativado' }[mode] || 'Manual';
 
-    const enabledCheck = el('input', { type: 'checkbox', checked: enabled });
-    enabledCheck.addEventListener('change', () => this.handlers.onSummarySettings?.({ summaryEnabled: enabledCheck.checked }));
+    const settingsToggle = el('button', {
+      className: 'wai-subsection-toggle',
+      type: 'button',
+      text: `Configurações do resumo • ${modeLabel} ${this.expandedSections.summarySettings ? '▴' : '▾'}`,
+      onClick: () => this.toggleSection('summarySettings')
+    });
+    body.append(settingsToggle);
 
-    const modeSelect = el('select', { className: 'wai-select' });
-    for (const [value, label] of [['manual', 'Manual'], ['automatic', 'Automático'], ['disabled', 'Desativado']]) {
-      const option = el('option', { value, text: label });
-      if (mode === value) option.selected = true;
-      modeSelect.append(option);
+    if (this.expandedSections.summarySettings) {
+      const settingsBody = el('div', { className: 'wai-subsection-body' });
+      const enabledCheck = el('input', { type: 'checkbox', checked: enabled });
+      enabledCheck.addEventListener('change', () => this.handlers.onSummarySettings?.({ summaryEnabled: enabledCheck.checked }));
+
+      const modeSelect = el('select', { className: 'wai-select' });
+      for (const [value, label] of [['manual', 'Manual'], ['automatic', 'Automático'], ['disabled', 'Desativado']]) {
+        const option = el('option', { value, text: label });
+        if (mode === value) option.selected = true;
+        modeSelect.append(option);
+      }
+      modeSelect.addEventListener('change', () => this.handlers.onSummarySettings?.({ summaryMode: modeSelect.value }));
+
+      const everyInput = el('input', {
+        className: 'wai-input',
+        type: 'number',
+        value: every,
+        min: 2,
+        max: 50,
+        step: 1
+      });
+      everyInput.addEventListener('change', () => this.handlers.onSummarySettings?.({
+        summaryEvery: Math.max(2, Math.min(50, Number(everyInput.value) || 2))
+      }));
+
+      appendPresent(
+        settingsBody,
+        el('label', { className: 'wai-check' }, [
+          enabledCheck,
+          el('span', { text: 'Resumo habilitado para esta conversa' })
+        ]),
+        field('Modo', modeSelect)
+      );
+
+      if (mode === 'automatic') {
+        settingsBody.append(field(
+          'Atualizar a cada N mensagens',
+          everyInput,
+          'Contam mensagens recebidas e enviadas observadas pela extensão.'
+        ));
+      }
+
+      settingsBody.append(
+        el('div', { className: 'wai-divider' }),
+        button('Limpar histórico local desta conversa', () => this.handlers.onClearChatHistory?.(), 'secondary small')
+      );
+      body.append(settingsBody);
     }
-    modeSelect.addEventListener('change', () => this.handlers.onSummarySettings?.({ summaryMode: modeSelect.value }));
 
-    const everyInput = el('input', { className: 'wai-input', type: 'number', value: every, min: 2, max: 50, step: 1 });
-    everyInput.addEventListener('change', () => this.handlers.onSummarySettings?.({ summaryEvery: Math.max(2, Math.min(50, Number(everyInput.value) || 2)) }));
-
-    body.append(
-      el('label', { className: 'wai-check' }, [enabledCheck, el('span', { text: 'Resumo habilitado para esta conversa' })]),
-      field('Modo', modeSelect),
-      mode === 'automatic' ? field('Atualizar a cada N mensagens', everyInput, 'Contam mensagens recebidas e enviadas observadas pela extensão.') : null,
-      el('div', { className: 'wai-divider' }),
-      button('Limpar histórico local desta conversa', () => this.handlers.onClearChatHistory?.(), 'secondary small')
-    );
-
-    return section('Resumo', body);
+    return collapsibleSection({
+      title: '📝 Resumo',
+      summary: status,
+      expanded: true,
+      onToggle: () => this.toggleSection('summary'),
+      body
+    });
   }
 
   renderTranslationSection() {
-    const body = el('div');
-    if (!this.chat) {
-      body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa para configurar os idiomas.' }));
-      return section('Tradução', body);
+    const state = translationCompactState(this.chatSettings, this.expandedSections.translation);
+    const enabledCheck = el('input', {
+      type: 'checkbox',
+      checked: state.enabled,
+      disabled: this.chatSettingsLoading || !this.chat
+    });
+    enabledCheck.addEventListener('change', () => {
+      this.expandedSections.translation = Boolean(enabledCheck.checked);
+      this.handlers.onSummarySettings?.({ translationEnabled: enabledCheck.checked });
+    });
+
+    const action = el('label', {
+      className: 'wai-compact-check',
+      title: state.enabled ? 'Tradução ativada' : 'Ativar tradução'
+    }, [
+      enabledCheck
+    ]);
+
+    if (!this.chat || !state.enabled) {
+      return collapsibleSection({
+        title: '🌐 Tradução',
+        summary: this.chat ? state.summary : 'Sem conversa',
+        expanded: false,
+        disabled: true,
+        action
+      });
     }
+
+    if (!state.showDetails) {
+      return collapsibleSection({
+        title: '🌐 Tradução',
+        summary: state.summary,
+        expanded: false,
+        onToggle: () => this.toggleSection('translation'),
+        action
+      });
+    }
+
+    const body = el('div');
     const translation = translationSettings(this.chatSettings);
-    const enabled = el('input', { type: 'checkbox', checked: translation.enabled, disabled: this.chatSettingsLoading });
-    enabled.addEventListener('change', () => this.handlers.onSummarySettings?.({ translationEnabled: enabled.checked }));
-    body.append(el('label', { className: 'wai-check' }, [enabled, el('span', { text: 'Modo tradução nesta conversa' })]));
     for (const [key, label] of [['myLanguage', 'Meu idioma'], ['contactLanguage', 'Idioma do contato']]) {
       const select = el('select', { className: 'wai-select', disabled: this.chatSettingsLoading });
       for (const [value, text] of Object.entries(LANGUAGES)) {
@@ -453,33 +615,69 @@ export class SidebarUI {
       select.addEventListener('change', () => this.handlers.onSummarySettings?.({ [key]: select.value }));
       body.append(field(label, select));
     }
-    if (translation.enabled) {
-      body.append(el('div', { className: 'wai-help', text: 'As traduções aparecem junto aos balões originais. Sugestões geradas ficam prontas no idioma do contato antes de poderem ser usadas ou enviadas.' }));
-      const blocked = this.chatSettings?.aiEnabled !== true || this.chatSettingsLoading || this.settings?.aiPaused;
-      body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : 'Traduzir rascunho e aplicar', disabled: blocked || this.applyingTranslation, onClick: () => this.handlers.onTranslateDraft?.() }));
-      body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.translatingBubbles ? 'Traduzindo balões…' : 'Traduzir balões do contato', disabled: blocked || this.translatingBubbles, onClick: () => this.handlers.onRetryTranslations?.() }));
-      body.append(el('div', { className: 'wai-help', text: this.chatSettings?.aiEnabled !== true ? 'Marque “Usar IA” para permitir traduções.' : this.translationStatus || 'Traduções automáticas usam sua API e respeitam os limites de consumo.' }));
+
+    const blocked = this.chatSettings?.aiEnabled !== true || this.chatSettingsLoading || this.settings?.aiPaused;
+    body.append(el('div', { className: 'wai-actions' }, [
+      el('button', {
+        className: 'wai-btn secondary small',
+        type: 'button',
+        text: this.applyingTranslation ? 'Traduzindo…' : 'Traduzir rascunho',
+        disabled: blocked || this.applyingTranslation,
+        onClick: () => this.handlers.onTranslateDraft?.()
+      }),
+      el('button', {
+        className: 'wai-btn secondary small',
+        type: 'button',
+        text: this.translatingBubbles ? 'Traduzindo…' : 'Traduzir balões',
+        disabled: blocked || this.translatingBubbles,
+        onClick: () => this.handlers.onRetryTranslations?.()
+      })
+    ]));
+
+    if (this.chatSettings?.aiEnabled !== true || this.translationStatus) {
+      body.append(el('div', {
+        className: 'wai-help',
+        text: this.chatSettings?.aiEnabled !== true
+          ? 'Ative a IA desta conversa para usar tradução.'
+          : this.translationStatus
+      }));
     }
-    return section('Tradução', body);
+
+    return collapsibleSection({
+      title: '🌐 Tradução',
+      summary: state.summary,
+      expanded: true,
+      onToggle: () => this.toggleSection('translation'),
+      body,
+      action
+    });
   }
 
+
   renderPromptsSection() {
-    const body = el('div');
+    const expanded = Boolean(this.expandedSections.prompts);
     const globals = this.prompts.filter(prompt => (prompt.scope || PROMPT_SCOPE.GLOBAL) === PROMPT_SCOPE.GLOBAL);
     const chatPrompts = this.prompts.filter(prompt => prompt.scope === PROMPT_SCOPE.CHAT);
+    const status = promptsCompactStatus(this.prompts);
 
+    if (!expanded) {
+      return collapsibleSection({
+        title: '✨ Prompts',
+        summary: status,
+        expanded: false,
+        onToggle: () => this.toggleSection('prompts')
+      });
+    }
+
+    const body = el('div');
     const renderPromptRow = prompt => {
       const check = el('input', { type: 'checkbox', checked: prompt.enabled });
       check.addEventListener('change', () => this.handlers.onPromptToggle?.(prompt, { enabled: check.checked }));
 
       const isChatPrompt = prompt.scope === PROMPT_SCOPE.CHAT;
-      const scopeText = isChatPrompt
-        ? (this.chat?.isGroup ? 'grupo' : 'esta conversa')
-        : 'global';
-
+      const scopeText = isChatPrompt ? (this.chat?.isGroup ? 'grupo' : 'esta conversa') : 'global';
       const run = button('▶', () => this.handlers.onRunPrompt?.(prompt), 'secondary small');
       run.disabled = !this.chat || this.chatSettingsLoading || this.chatSettings?.aiEnabled !== true || !prompt.enabled;
-
       const edit = button('✎', () => this.showPromptEditor(prompt), 'secondary small');
 
       const children = [
@@ -519,29 +717,31 @@ export class SidebarUI {
     }
 
     if (globals.length) {
-      body.append(el('div', { className: 'wai-help wai-prompt-group-title', text: 'Globais · disponíveis em todas as conversas' }));
+      body.append(el('div', {
+        className: 'wai-help wai-prompt-group-title',
+        text: 'Globais'
+      }));
       for (const prompt of globals) body.append(renderPromptRow(prompt));
     }
 
     body.append(el('div', { className: 'wai-actions wai-prompt-create-actions' }, [
-      button('+ Prompt global', () => this.showPromptEditor(null, PROMPT_SCOPE.GLOBAL), 'secondary small'),
       this.chat
         ? button(
-            this.chat.isGroup ? '+ Prompt para este grupo' : '+ Prompt para este contato',
+            this.chat.isGroup ? '+ Para este grupo' : '+ Para este contato',
             () => this.showPromptEditor(null, PROMPT_SCOPE.CHAT),
             'secondary small'
           )
-        : null
+        : null,
+      button('+ Global', () => this.showPromptEditor(null, PROMPT_SCOPE.GLOBAL), 'secondary small')
     ]));
 
-    if (this.chat) {
-      body.append(el('div', {
-        className: 'wai-help',
-        text: 'Prompts específicos aparecem somente nesta conversa. Prompts globais continuam disponíveis em todas.'
-      }));
-    }
-
-    return section('Prompts', body);
+    return collapsibleSection({
+      title: '✨ Prompts',
+      summary: status,
+      expanded: true,
+      onToggle: () => this.toggleSection('prompts'),
+      body
+    });
   }
 
   showPromptEditor(prompt, requestedScope = PROMPT_SCOPE.GLOBAL) {

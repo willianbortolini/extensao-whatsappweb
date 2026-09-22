@@ -17,14 +17,29 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-header-actions{display:flex;gap:6px}
 .wai-icon{width:34px;height:34px;border:1px solid var(--wai-border);border-radius:9px;background:#fff;cursor:pointer;font-size:16px;color:var(--wai-text)}
 .wai-icon:hover{background:var(--wai-soft)}
-.wai-contact{padding:11px 14px;background:#fff;border-bottom:1px solid var(--wai-border)}
+.wai-contact{padding:10px 12px;background:#fff;border-bottom:1px solid var(--wai-border)}
+.wai-contact-compact{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .wai-contact-name{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wai-contact-meta{font-size:11px;color:var(--wai-muted);margin-top:3px}
-.wai-content{flex:1;min-height:0;overflow:auto;padding:14px}
-.wai-section{background:var(--wai-surface);border:1px solid var(--wai-border);border-radius:12px;margin-bottom:12px;overflow:hidden}
-.wai-section-head{padding:11px 12px;border-bottom:1px solid var(--wai-border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.wai-ai-toggle{margin:0;align-items:center;white-space:nowrap}
+.wai-content{flex:1;min-height:0;overflow:auto;padding:10px}
+.wai-section{background:var(--wai-surface);border:1px solid var(--wai-border);border-radius:12px;margin-bottom:8px;overflow:hidden}
+.wai-section-primary{border-color:#cfe6de}
+.wai-section-head{padding:10px 11px;border-bottom:1px solid var(--wai-border);display:flex;align-items:center;justify-content:space-between;gap:8px}
 .wai-section-title{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
-.wai-section-body{padding:12px}
+.wai-section-body{padding:11px}
+.wai-collapsible:not(.expanded) .wai-section-head{border-bottom:0}
+.wai-section-head-compact{padding:0;min-height:46px}
+.wai-section-toggle{min-width:0;flex:1;min-height:46px;padding:9px 11px;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;text-align:left;cursor:pointer}
+.wai-section-toggle:disabled{cursor:default}
+.wai-section-compact-summary{min-width:0;text-align:right;font-size:11px;color:var(--wai-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wai-chevron{font-size:11px;color:var(--wai-muted);width:14px;text-align:center}
+.wai-compact-check{display:flex;align-items:center;justify-content:center;padding:0 11px 0 4px;margin:0;min-height:46px;cursor:pointer}
+.wai-compact-check input{margin:0}
+.wai-subsection-toggle{width:100%;margin-top:10px;padding:8px 0;border:0;border-top:1px solid var(--wai-border);background:transparent;color:var(--wai-muted);font-size:11px;font-weight:700;text-align:left;cursor:pointer}
+.wai-subsection-body{padding-top:4px}
+.wai-summary-actions{margin-top:9px}
+.wai-summary-warning{margin:6px 0 8px;padding:7px 8px;border-radius:7px;background:#fff7df;color:var(--wai-warn);font-size:10px;line-height:1.4}
 .wai-muted{color:var(--wai-muted);font-size:12px;line-height:1.45}
 .wai-status{font-size:11px;padding:3px 7px;border-radius:999px;background:var(--wai-soft);color:var(--wai-brand-dark);font-weight:700}
 .wai-status.warn{background:#fff5d9;color:var(--wai-warn)}
@@ -34,7 +49,7 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-suggestion.selected{border-color:var(--wai-brand);box-shadow:0 0 0 2px rgba(0,168,132,.15)}
 .wai-suggestion-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
 .wai-suggestion-name{font-size:12px;font-weight:800}
-.wai-suggestion-text{white-space:pre-wrap;font-size:13px;line-height:1.45;word-break:break-word}
+.wai-suggestion-text{white-space:pre-wrap;font-size:13.5px;line-height:1.48;word-break:break-word}
 .wai-suggestion-actions{display:flex;gap:7px;margin-top:9px}
 .wai-suggested-message-card{border:1px solid var(--wai-border);border-radius:10px;padding:10px;margin-top:9px;background:#fff}
 .wai-suggested-message-actions{margin-top:9px}
@@ -42,7 +57,7 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-spinner{width:13px;height:13px;border:2px solid var(--wai-border);border-top-color:var(--wai-brand);border-radius:50%;animation:wai-spin .7s linear infinite}
 @keyframes wai-spin{to{transform:rotate(360deg)}}
 .wai-error{font-size:12px;color:var(--wai-danger);line-height:1.4}
-.wai-summary{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:210px;overflow:auto}
+.wai-summary{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:170px;overflow:auto}
 .wai-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px}
 .wai-label{font-size:12px;color:var(--wai-muted)}
 .wai-btn{border:1px solid var(--wai-brand-dark);background:var(--wai-brand-dark);color:#fff;border-radius:8px;padding:8px 10px;font-size:12px;font-weight:700;cursor:pointer}
@@ -56,6 +71,7 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-input:focus,.wai-select:focus,.wai-textarea:focus{border-color:var(--wai-brand)}
 .wai-textarea{min-height:130px;resize:vertical;line-height:1.45}
 .wai-check{display:flex;gap:8px;align-items:flex-start;font-size:12px;margin:8px 0}
+.wai-check input[type="checkbox"],.wai-compact-check input[type="checkbox"]{accent-color:var(--wai-brand-dark)}
 .wai-prompt-row{display:flex;align-items:center;gap:7px;padding:7px 0;border-bottom:1px solid var(--wai-border)}
 .wai-prompt-row:last-child{border-bottom:0}
 .wai-prompt-name{flex:1;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

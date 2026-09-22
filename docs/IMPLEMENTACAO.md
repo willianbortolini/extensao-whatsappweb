@@ -635,3 +635,75 @@ prompt permitido
 -> finalText
 -> Usar / Aplicar e enviar
 ```
+
+
+## Sidebar focada em sugestões
+
+A tela principal usa progressive disclosure: conteúdo de uso frequente fica sempre visível; configuração de suporte fica compacta.
+
+Ordem padrão:
+
+```text
+Contato
+Sugestões
+Sugerir mensagem
+Tradução [recolhida]
+Resumo [recolhido]
+Prompts [recolhidos]
+```
+
+O estado de expansão fica em memória dentro de `SidebarUI.expandedSections` e sobrevive aos frequentes `render()` disparados por `setState()`.
+
+### Seções compactas
+
+`collapsibleSection()` padroniza cabeçalho, resumo do estado e chevron.
+
+Estados iniciais:
+
+```js
+{
+  translation: false,
+  summary: false,
+  summarySettings: false,
+  prompts: false
+}
+```
+
+### Tradução
+
+- desligada: mostra apenas estado + checkbox;
+- ligada/recolhida: mostra somente o par de idiomas;
+- ligada/expandida: mostra idiomas e ações manuais;
+- habilitar pelo checkbox abre a configuração para escolha inicial;
+- desabilitar recolhe a seção.
+
+### Resumo
+
+Fechado mostra somente:
+
+```text
+Não criado
+✓ Atualizado
++N novas
+```
+
+Aberto mostra o conteúdo e ações. As configurações de modo/frequência/limpeza ficam em um segundo nível chamado **Configurações do resumo**.
+
+A montagem condicional usa `appendPresent()` e blocos `if`, evitando encaminhar `null` para `Node.append()`.
+
+### Prompts
+
+Fechado mostra somente contagem:
+
+```text
+N auto
+N auto • M aqui
+```
+
+Aberto mostra prompts específicos, globais e ações de criação/edição.
+
+### Conteúdo primário
+
+**Sugestões** e **Sugerir mensagem** recebem destaque visual e permanecem sempre abertas. O estado vazio de sugestões mostra apenas a instrução principal e o atalho Ctrl+Espaço.
+
+Na função **Sugerir mensagem**, estado normal do resumo fica silencioso; aviso só aparece quando existem mensagens novas ainda não incorporadas.
