@@ -423,3 +423,91 @@ texto digitado
 -> tradução
 -> mensagem final no idioma do contato
 ```
+
+
+## Sugerir mensagem a partir do resumo
+
+A sidebar possui uma funcionalidade manual separada das sugestões baseadas no rascunho.
+
+Fluxo:
+
+```text
+resumo salvo
++ prompt selecionado
++ mensagens recentes, se o prompt pedir
+-> SUGGEST_MESSAGE_GENERATE
+-> promptText
+-> tradução outgoing, se habilitada
+-> finalText
+-> Usar / Aplicar e enviar
+```
+
+A funcionalidade não depende de texto no composer e nunca roda automaticamente.
+
+### Prompt padrão
+
+O prompt `default-suggest-message-v1` / **Continuação da conversa** é adicionado a instalações novas e, por migração lógica registrada em `meta`, também a instalações já existentes sem sobrescrever prompts personalizados.
+
+### Resumo obrigatório
+
+`SUGGEST_MESSAGE_GENERATE` busca o resumo diretamente no IndexedDB pelo `accountId/chatId`. Sem resumo retorna `SUMMARY_REQUIRED` antes de chamar a OpenAI. A UI oferece **Gerar resumo**.
+
+### Contexto
+
+`buildSuggestedMessageInput()` sempre inclui:
+
+- tarefa do prompt;
+- nome exibido da conversa;
+- resumo local e sua versão;
+- mensagens recentes somente quando `includeRecentMessages=true`.
+
+Resumo e mensagens continuam rotulados como dados não confiáveis.
+
+### Cache e Gerar outra
+
+A chave inclui operação, prompt, versão/conteúdo efetivo do resumo, mensagens recentes, modelo e limite de saída.
+
+**Sugerir mensagem** pode reutilizar cache. **Gerar outra** envia `forceNew=true`, ignora a leitura do cache e executa nova chamada explícita. O novo resultado substitui o cache daquela combinação.
+
+### Estado separado
+
+`suggestedMessage` é separado de `ui.suggestions`. Possui `accountId`, `chatId`, `promptId`, `summaryVersion`, `promptText`, `finalText`, metadados de tradução e status próprio.
+
+Estados:
+
+```text
+generating
+translating
+success
+error
+```
+
+### Tradução
+
+Com tradução desativada:
+
+```text
+finalText = promptText
+```
+
+Com tradução ativada:
+
+```text
+promptText
+-> TRANSLATE_TEXT outgoing automatic=false
+-> finalText no idioma do contato
+```
+
+Falha de tradução deixa `finalText` vazio e status `error`.
+
+### Aplicação e envio
+
+**Usar** chama `composerBridge.replaceText(finalText)`. Se já houver outro rascunho, pede confirmação antes de substituí-lo.
+
+**Aplicar e enviar** chama `composerBridge.replaceAndSend(finalText)` e reutiliza a transação segura já implementada. Em falha, a mensagem sugerida permanece disponível.
+
+Ctrl+Enter continua exclusivo da lista normal de sugestões, mantendo comportamento previsível.
+
+### Invalidação
+
+A mensagem sugerida é invalidada ao trocar de conta/conversa, ao mudar configurações da conversa (incluindo idiomas), ou quando a versão do resumo muda. Respostas assíncronas de outra conversa, configuração ou versão de resumo são descartadas.

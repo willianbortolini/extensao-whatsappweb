@@ -1,4 +1,4 @@
-import { DEFAULT_PROMPTS } from '../config.js';
+import { DEFAULT_PROMPTS, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID } from '../config.js';
 import { messageStorageId, mergeMessageRecord } from './message-record.js';
 
 const DB_NAME = 'whatsapp_ai_assistant';
@@ -91,14 +91,27 @@ export async function openDatabase() {
 
 export async function ensureDefaults() {
   const db = await openDatabase();
-  const tx = db.transaction('prompts', 'readwrite');
+  const tx = db.transaction(['prompts', 'meta'], 'readwrite');
   const store = tx.objectStore('prompts');
+  const meta = tx.objectStore('meta');
   const count = await requestPromise(store.count());
+  const now = Date.now();
+  const migrationKey = 'defaults:suggest-message-v1';
 
   if (!count) {
-    const now = Date.now();
     for (const prompt of DEFAULT_PROMPTS) {
       store.put({ ...prompt, createdAt: now, updatedAt: now });
+    }
+    meta.put({ key: migrationKey, value: true, updatedAt: now });
+  } else {
+    const migrated = await requestPromise(meta.get(migrationKey));
+    if (!migrated) {
+      const defaultPrompt = DEFAULT_PROMPTS.find(prompt => prompt.id === DEFAULT_SUGGEST_MESSAGE_PROMPT_ID);
+      if (defaultPrompt) {
+        const existing = await requestPromise(store.get(DEFAULT_SUGGEST_MESSAGE_PROMPT_ID));
+        if (!existing) store.put({ ...defaultPrompt, createdAt: now, updatedAt: now });
+      }
+      meta.put({ key: migrationKey, value: true, updatedAt: now });
     }
   }
 
@@ -186,6 +199,15 @@ export async function upsertChat(chat) {
   store.put(value);
   await txDone(tx);
   return value;
+}
+
+export async function getChat(accountId, chatId) {
+  const db = await openDatabase();
+  const id = chatKey(accountId, chatId);
+  const tx = db.transaction('chats', 'readonly');
+  const value = await requestPromise(tx.objectStore('chats').get(id));
+  await txDone(tx);
+  return value || null;
 }
 
 export async function upsertMessages(accountId, chatId, messages) {

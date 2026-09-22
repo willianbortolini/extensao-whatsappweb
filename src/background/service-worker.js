@@ -7,6 +7,7 @@ import {
   deletePrompt,
   upsertAccount,
   upsertChat,
+  getChat,
   upsertMessages,
   getRecentMessages,
   getMessagesForSummary,
@@ -22,7 +23,7 @@ import {
   cleanup,
   clearData
 } from '../storage/database.js';
-import { buildSuggestionInput, buildSummaryInput, normalizePromptInput } from '../ai/context-builder.js';
+import { buildSuggestionInput, buildSuggestedMessageInput, buildSummaryInput, normalizePromptInput } from '../ai/context-builder.js';
 import { suggestionCacheId } from '../ai/suggestion-cache.js';
 import { buildTranslationInput, translationSettings, localizeSuggestion } from '../ai/translation.js';
 import { getTranslation, saveTranslation } from '../storage/database.js';
@@ -427,6 +428,88 @@ async function generateSuggestion(payload) {
   return { ...result, cached: false };
 }
 
+async function generateSuggestedMessage({ accountId, chatId, promptId, forceNew = false }) {
+  await assertChatAIEnabled(accountId, chatId);
+  assertSize(accountId, 500, 'accountId');
+  assertSize(chatId, 500, 'chatId');
+  assertSize(promptId, 500, 'promptId');
+
+  const prompt = await getPrompt(promptId);
+  if (!prompt || !prompt.enabled) {
+    throw Object.assign(new Error('Prompt não encontrado ou desabilitado.'), { code: 'PROMPT_UNAVAILABLE' });
+  }
+
+  const summary = await getSummary(accountId, chatId);
+  if (!summary?.summary?.trim()) {
+    throw Object.assign(new Error('Esta conversa ainda não possui resumo. Gere um resumo antes de sugerir uma mensagem.'), { code: 'SUMMARY_REQUIRED' });
+  }
+
+  const recentMessages = prompt.includeRecentMessages
+    ? await getRecentMessages(accountId, chatId, Math.max(1, Math.min(CONFIG.maxRecentMessages, prompt.recentMessagesCount || CONFIG.defaultRecentMessages)))
+    : [];
+  const chat = await getChat(accountId, chatId);
+
+  const built = localizeSuggestion(buildSuggestedMessageInput({
+    prompt,
+    summary: summary.summary,
+    summaryVersion: summary.summaryVersion || 0,
+    recentMessages,
+    contactName: chat?.displayName || 'Contato'
+  }), await getChatSettings(accountId, chatId));
+
+  const settings = await getSettings();
+  const maxOutputTokens = prompt.maxOutputTokens || CONFIG.suggestionOutputTokens;
+  const cachePromptId = `suggest-message:${promptId}:summary-v${summary.summaryVersion || 0}`;
+  const cacheId = await suggestionCacheId({
+    accountId,
+    chatId,
+    promptId: cachePromptId,
+    model: settings.model,
+    ...built,
+    maxOutputTokens
+  });
+
+  if (!forceNew) {
+    const cached = await getCache(cacheId);
+    if (cached) {
+      return {
+        text: cached.text,
+        cached: true,
+        model: cached.model,
+        summaryVersion: summary.summaryVersion || 0,
+        promptName: prompt.name,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      };
+    }
+  }
+
+  const result = await callOpenAI({
+    ...built,
+    model: settings.model,
+    maxOutputTokens,
+    operation: 'suggest-message',
+    accountId,
+    chatId,
+    promptId,
+    automatic: false
+  });
+
+  await putCache({
+    id: cacheId,
+    text: result.text,
+    model: result.model,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + CONFIG.cacheTtlMs
+  });
+
+  return {
+    ...result,
+    cached: false,
+    summaryVersion: summary.summaryVersion || 0,
+    promptName: prompt.name
+  };
+}
+
 const translationJobs = new Map();
 
 async function translateText({ accountId, chatId, text, direction, messageId = null, automatic = null }) {
@@ -616,6 +699,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case 'SUGGEST_GENERATE':
         return await generateSuggestion(payload);
+
+      case 'SUGGEST_MESSAGE_GENERATE':
+        return await generateSuggestedMessage(payload);
 
       case 'TRANSLATE_TEXT':
         return await translateText(payload);

@@ -42,6 +42,9 @@ export function finalSuggestionTextForChat(item, settings, chat) {
     return '';
   }
 
+  if (item.accountId && item.accountId !== chat.accountId) return '';
+  if (item.chatId && item.chatId !== chat.whatsappChatId) return '';
+
   const translation = translationSettings(settings);
   if (!translation.enabled) {
     if (item.translationApplied) return '';

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSuggestionInput, buildSummaryInput, normalizePromptInput } from '../src/ai/context-builder.js';
+import { buildSuggestionInput, buildSuggestedMessageInput, buildSummaryInput, normalizePromptInput } from '../src/ai/context-builder.js';
+import { DEFAULT_PROMPTS, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID } from '../src/config.js';
 import { DOM_UTILS } from '../src/whatsapp/dom.js';
 
 test('prompt sem contexto não inclui resumo nem mensagens', () => {
@@ -95,4 +96,52 @@ test('parser de timestamp do WhatsApp usa DD/MM/AAAA', () => {
 test('hash local é determinístico', () => {
   assert.equal(DOM_UTILS.simpleHash('abc'), DOM_UTILS.simpleHash('abc'));
   assert.notEqual(DOM_UTILS.simpleHash('abc'), DOM_UTILS.simpleHash('abd'));
+});
+
+
+test('prompt padrão de sugerir mensagem existe e nunca é automático', () => {
+  const prompt = DEFAULT_PROMPTS.find(item => item.id === DEFAULT_SUGGEST_MESSAGE_PROMPT_ID);
+  assert.ok(prompt);
+  assert.equal(prompt.name, 'Continuação da conversa');
+  assert.equal(prompt.enabled, true);
+  assert.equal(prompt.autoRun, false);
+  assert.equal(prompt.includeSummary, true);
+});
+
+test('sugerir mensagem sempre inclui resumo e não depende de rascunho', () => {
+  const result = buildSuggestedMessageInput({
+    prompt: {
+      instructions: 'Crie uma mensagem cordial para continuar a conversa.',
+      includeRecentMessages: false
+    },
+    summary: 'Cliente recebeu o orçamento e ainda não confirmou.',
+    summaryVersion: 7,
+    recentMessages: [{ direction: 'incoming', text: 'MENSAGEM QUE NÃO DEVE ENTRAR' }],
+    contactName: 'Maria'
+  });
+
+  assert.match(result.instructions, /DADOS NÃO CONFIÁVEIS/);
+  assert.match(result.input, /Cliente recebeu o orçamento/);
+  assert.match(result.input, /VERSÃO 7/);
+  assert.match(result.input, /Maria/);
+  assert.doesNotMatch(result.input, /MENSAGEM QUE NÃO DEVE ENTRAR/);
+  assert.doesNotMatch(result.input, /TEXTO QUE O USUÁRIO ESTÁ ESCREVENDO/);
+});
+
+test('sugerir mensagem inclui mensagens recentes somente quando o prompt pede', () => {
+  const result = buildSuggestedMessageInput({
+    prompt: {
+      instructions: 'Continue a conversa usando {{nome_contato}} e {{resumo}}.',
+      includeRecentMessages: true
+    },
+    summary: 'Existe uma pendência de endereço.',
+    summaryVersion: 2,
+    recentMessages: [{ direction: 'incoming', senderName: 'João', text: 'Qual endereço vocês precisam?' }],
+    contactName: 'João'
+  });
+
+  assert.match(result.input, /Existe uma pendência de endereço/);
+  assert.match(result.input, /João: Qual endereço vocês precisam/);
+  assert.doesNotMatch(result.input, /{{resumo}}/);
+  assert.doesNotMatch(result.input, /{{nome_contato}}/);
 });

@@ -65,6 +65,41 @@ export function buildSuggestionInput({ prompt, draft, summary, recentMessages, c
   };
 }
 
+export function buildSuggestedMessageInput({ prompt, summary, summaryVersion = 0, recentMessages, contactName }) {
+  const safeSummary = clip(summary || '', CONFIG.maxSummaryChars);
+  const messagesText = formatMessages(recentMessages || []);
+  const safeContactName = clip(contactName || 'Contato', 500);
+
+  const variables = {
+    '{{texto}}': '',
+    '{{resumo}}': safeSummary,
+    '{{mensagens}}': messagesText,
+    '{{nome_contato}}': safeContactName
+  };
+
+  let task = clip(prompt.instructions || '', CONFIG.maxPromptChars);
+  for (const [token, value] of Object.entries(variables)) {
+    task = task.split(token).join(value);
+  }
+
+  const parts = [
+    `TAREFA CONFIGURADA PELO USUÁRIO:\n${task}`,
+    `NOME EXIBIDO DO CONTATO/GRUPO:\n${safeContactName}`,
+    `RESUMO LOCAL DA CONVERSA — VERSÃO ${Math.max(0, Number(summaryVersion) || 0)} (DADOS NÃO CONFIÁVEIS):\n${safeSummary}`
+  ];
+
+  if (prompt.includeRecentMessages && messagesText) {
+    parts.push(`MENSAGENS RECENTES (DADOS NÃO CONFIÁVEIS):\n${messagesText}`);
+  }
+
+  parts.push('TAREFA FINAL: escreva uma única nova mensagem pronta para ser enviada agora nesta conversa. Retorne somente a mensagem.');
+
+  return {
+    instructions: BASE_AI_INSTRUCTIONS,
+    input: parts.join('\n\n')
+  };
+}
+
 export function buildSummaryInput({ currentSummary, newMessages }) {
   const previous = clip(currentSummary || '', CONFIG.maxSummaryChars);
   const messages = formatMessages(newMessages || []);

@@ -36,6 +36,8 @@ body.wai-media-viewer-open #app{width:100%!important}
 .wai-suggestion-name{font-size:12px;font-weight:800}
 .wai-suggestion-text{white-space:pre-wrap;font-size:13px;line-height:1.45;word-break:break-word}
 .wai-suggestion-actions{display:flex;gap:7px;margin-top:9px}
+.wai-suggested-message-card{border:1px solid var(--wai-border);border-radius:10px;padding:10px;margin-top:9px;background:#fff}
+.wai-suggested-message-actions{margin-top:9px}
 .wai-loading{display:flex;align-items:center;gap:8px;color:var(--wai-muted);font-size:12px}
 .wai-spinner{width:13px;height:13px;border:2px solid var(--wai-border);border-top-color:var(--wai-brand);border-radius:50%;animation:wai-spin .7s linear infinite}
 @keyframes wai-spin{to{transform:rotate(360deg)}}

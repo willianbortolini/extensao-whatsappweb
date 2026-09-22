@@ -239,3 +239,24 @@ tests/translation-apply.test.js
 - **Traduzir rascunho e aplicar** continua funcionando independentemente dos cards;
 - deve traduzir o rascunho atual e aplicar pelo composer bridge;
 - não deve transformar esse rascunho em card de sugestão pronto para envio.
+
+
+## Sugerir mensagem — testes obrigatórios
+
+- existe prompt padrão **Continuação da conversa** com `autoRun=false`;
+- builder usa resumo mesmo sem rascunho;
+- mensagens recentes entram apenas quando o prompt pede;
+- sem resumo retorna `SUMMARY_REQUIRED` e zero chamadas OpenAI;
+- prompt desabilitado retorna `PROMPT_UNAVAILABLE`;
+- mesma combinação pode reutilizar cache;
+- **Gerar outra** com `forceNew=true` executa nova chamada;
+- tradução desligada produz `finalText=promptText`;
+- tradução ligada só chega a `success` depois de `TRANSLATE_TEXT`;
+- falha de tradução mantém `finalText=""` e impede envio;
+- troca de conversa durante a geração descarta resposta;
+- alteração da versão do resumo descarta resultado antigo;
+- **Usar** confirma antes de sobrescrever um rascunho existente;
+- **Aplicar e enviar** usa exclusivamente `finalText`;
+- falha no composer mantém o resultado na sidebar;
+- sucesso no envio limpa o resultado e informa confirmação;
+- grupos usam o mesmo `whatsappChatId` e não dependem de telefone.

@@ -51,6 +51,10 @@ export class SidebarUI {
     this.prompts = [];
     this.suggestions = [];
     this.selectedIndex = -1;
+    this.suggestedMessage = null;
+    this.suggestedMessagePromptId = '';
+    this.suggestedMessageStatus = '';
+    this.suggestedMessageSending = false;
     this.settings = null;
     this.summary = null;
     this.chatSettings = null;
@@ -108,6 +112,7 @@ export class SidebarUI {
     content.append(
       this.renderTranslationSection(),
       this.renderSuggestionsSection(),
+      this.renderSuggestedMessageSection(),
       this.renderSummarySection(),
       this.renderPromptsSection()
     );
@@ -231,6 +236,138 @@ export class SidebarUI {
     }));
   }
 
+  renderSuggestedMessageSection() {
+    const body = el('div');
+
+    if (this.suggestedMessageStatus) {
+      body.append(el('div', { className: 'wai-help', text: this.suggestedMessageStatus }));
+    }
+
+    if (!this.chat) {
+      body.append(el('div', { className: 'wai-empty', text: 'Selecione uma conversa para sugerir uma mensagem.' }));
+      return section('Sugerir mensagem', body);
+    }
+
+    if (this.chatSettings?.aiEnabled !== true) {
+      body.append(el('div', { className: 'wai-empty', text: 'Ative “Usar IA” nesta conversa para sugerir uma mensagem.' }));
+      return section('Sugerir mensagem', body);
+    }
+
+    if (this.settings?.aiPaused) {
+      body.append(el('div', { className: 'wai-empty', text: 'A IA está pausada.' }));
+      return section('Sugerir mensagem', body);
+    }
+
+    if (!this.keyStatus?.configured) {
+      body.append(
+        el('div', { className: 'wai-muted', text: 'Configure sua API key da OpenAI para sugerir mensagens.' }),
+        el('div', { className: 'wai-actions' }, [
+          button('Configurar API', () => this.handlers.onOpenOptions?.(), 'secondary small')
+        ])
+      );
+      return section('Sugerir mensagem', body);
+    }
+
+    const summaryText = this.summary?.summary || '';
+    if (!summaryText.trim()) {
+      body.append(
+        el('div', { className: 'wai-empty', text: 'Esta conversa ainda não possui resumo. Gere um resumo para habilitar esta função.' }),
+        el('div', { className: 'wai-actions' }, [
+          button('Gerar resumo', () => this.handlers.onGenerateSummary?.(false), 'small')
+        ])
+      );
+      return section('Sugerir mensagem', body);
+    }
+
+    const enabledPrompts = this.prompts.filter(prompt => prompt.enabled);
+    if (!enabledPrompts.length) {
+      body.append(el('div', { className: 'wai-empty', text: 'Nenhum prompt habilitado está disponível.' }));
+      return section('Sugerir mensagem', body);
+    }
+
+    const promptSelect = el('select', {
+      className: 'wai-select',
+      disabled: this.chatSettingsLoading || Boolean(this.suggestedMessage && ['generating', 'translating'].includes(this.suggestedMessage.status))
+    });
+    for (const prompt of enabledPrompts) {
+      const option = el('option', { value: prompt.id, text: prompt.name });
+      if (prompt.id === this.suggestedMessagePromptId) option.selected = true;
+      promptSelect.append(option);
+    }
+    promptSelect.addEventListener('change', () => this.handlers.onSuggestedMessagePromptChange?.(promptSelect.value));
+    body.append(field('Prompt', promptSelect, 'O resumo da conversa é sempre usado. Mensagens recentes entram quando o prompt estiver configurado para incluí-las.'));
+
+    const pending = Number(this.summary?.messagesSinceSummary) || 0;
+    body.append(el('div', {
+      className: 'wai-help',
+      text: pending > 0
+        ? `Resumo versão ${this.summary?.summaryVersion || 0} • ${pending} mensagem(ns) nova(s) ainda não incorporada(s). Você pode atualizar o resumo antes de gerar.`
+        : `Resumo versão ${this.summary?.summaryVersion || 0} disponível para gerar a mensagem.`
+    }));
+
+    const item = this.suggestedMessage;
+    if (!item) {
+      body.append(el('div', { className: 'wai-actions wai-suggested-message-actions' }, [
+        button('Sugerir mensagem', () => this.handlers.onGenerateSuggestedMessage?.(false), 'small'),
+        pending > 0 ? button('Atualizar resumo', () => this.handlers.onGenerateSummary?.(false), 'secondary small') : null
+      ]));
+      return section('Sugerir mensagem', body);
+    }
+
+    if (item.status === 'generating' || item.status === 'translating') {
+      body.append(el('div', { className: 'wai-loading wai-suggested-message-card' }, [
+        el('span', { className: 'wai-spinner' }),
+        el('span', {
+          text: item.status === 'translating'
+            ? `Traduzindo para ${LANGUAGES[item.targetLanguage] || 'o idioma do contato'}…`
+            : 'Gerando mensagem com base no resumo…'
+        })
+      ]));
+      return section('Sugerir mensagem', body);
+    }
+
+    if (item.status === 'error') {
+      body.append(
+        el('div', { className: 'wai-error', text: item.error || 'Não foi possível gerar a mensagem.' }),
+        el('div', { className: 'wai-actions' }, [
+          button('Tentar novamente', () => this.handlers.onRetrySuggestedMessage?.(), 'secondary small')
+        ])
+      );
+      return section('Sugerir mensagem', body);
+    }
+
+    const finalText = finalSuggestionTextForChat(item, this.chatSettings, this.chat);
+    body.append(el('div', { className: 'wai-suggested-message-card' }, [
+      el('div', { className: 'wai-suggestion-head' }, [
+        el('div', { className: 'wai-suggestion-name', text: item.promptName || 'Mensagem sugerida' }),
+        item.cached && (!item.translationApplied || item.translationCached)
+          ? el('span', { className: 'wai-status', text: 'cache' })
+          : null
+      ]),
+      item.translationApplied
+        ? el('div', {
+            className: 'wai-help',
+            text: `Mensagem final • ${LANGUAGES[item.targetLanguage] || 'idioma do contato'}`
+          })
+        : null,
+      el('div', { className: 'wai-suggestion-text', text: finalText || item.finalText || '' })
+    ]));
+
+    body.append(el('div', { className: 'wai-actions wai-suggested-message-actions' }, [
+      button('Usar', () => this.handlers.onUseSuggestedMessage?.(), 'secondary small'),
+      el('button', {
+        className: 'wai-btn small',
+        type: 'button',
+        text: this.suggestedMessageSending ? 'Enviando…' : 'Aplicar e enviar',
+        disabled: this.suggestedMessageSending || !finalText || item.sendRequested,
+        onClick: () => this.handlers.onSendSuggestedMessage?.()
+      }),
+      button('Gerar outra', () => this.handlers.onGenerateSuggestedMessage?.(true), 'secondary small')
+    ]));
+
+    return section('Sugerir mensagem', body);
+  }
+
   renderSummarySection() {
     const body = el('div');
     if (!this.chat) {
@@ -314,7 +451,7 @@ export class SidebarUI {
       body.append(field(label, select));
     }
     if (translation.enabled) {
-      body.append(el('div', { className: 'wai-help', text: 'As traduções aparecem junto aos balões originais. Revise sugestões no seu idioma; ao aplicar, o texto será traduzido para o contato, sem enviar.' }));
+      body.append(el('div', { className: 'wai-help', text: 'As traduções aparecem junto aos balões originais. Sugestões geradas ficam prontas no idioma do contato antes de poderem ser usadas ou enviadas.' }));
       const blocked = this.chatSettings?.aiEnabled !== true || this.chatSettingsLoading || this.settings?.aiPaused;
       body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : 'Traduzir rascunho e aplicar', disabled: blocked || this.applyingTranslation, onClick: () => this.handlers.onTranslateDraft?.() }));
       body.append(el('button', { className: 'wai-btn secondary small', type: 'button', text: this.translatingBubbles ? 'Traduzindo balões…' : 'Traduzir balões do contato', disabled: blocked || this.translatingBubbles, onClick: () => this.handlers.onRetryTranslations?.() }));

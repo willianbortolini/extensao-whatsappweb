@@ -1,4 +1,4 @@
-import { CONFIG } from './config.js';
+import { CONFIG, DEFAULT_SUGGEST_MESSAGE_PROMPT_ID } from './config.js';
 import { sendRuntime, openOptions } from './runtime.js';
 import { WhatsAppDom } from './whatsapp/dom.js';
 import { WhatsAppComposerBridge, normalizeComposerText } from './whatsapp/composer-bridge.js';
@@ -21,6 +21,11 @@ export class WhatsAppAIApp {
     this.keyStatus = null;
     this.prompts = [];
     this.summary = null;
+    this.suggestedMessage = null;
+    this.suggestedMessagePromptId = DEFAULT_SUGGEST_MESSAGE_PROMPT_ID;
+    this.suggestedMessageGeneration = 0;
+    this.suggestedMessageStatus = '';
+    this.suggestedMessageSending = false;
     this.chatSettings = null;
     this.chatSettingsLoading = true;
     this.chatSettingsRevision = 0;
@@ -60,6 +65,7 @@ export class WhatsAppAIApp {
     this.settings = init.settings;
     this.keyStatus = init.keyStatus;
     this.prompts = init.prompts || [];
+    this.chooseSuggestedMessagePrompt();
 
     this.ui = new SidebarUI({
       onClose: () => this.setSidebarOpen(false),
@@ -70,6 +76,11 @@ export class WhatsAppAIApp {
       onRetrySuggestion: item => this.retrySuggestion(item),
       onUseSuggestion: item => this.useSuggestion(item),
       onSendSuggestion: item => this.applyAndSendSuggestion(item),
+      onSuggestedMessagePromptChange: id => this.setSuggestedMessagePrompt(id),
+      onGenerateSuggestedMessage: forceNew => this.generateSuggestedMessage(Boolean(forceNew)),
+      onRetrySuggestedMessage: () => this.generateSuggestedMessage(false),
+      onUseSuggestedMessage: () => this.useSuggestedMessage(),
+      onSendSuggestedMessage: () => this.sendSuggestedMessage(),
       onTranslateDraft: () => this.translateDraftAndApply(),
       onRetryTranslations: () => this.retryBubbleTranslations(),
       onGenerateSummary: force => this.generateSummary(false, force),
@@ -85,7 +96,11 @@ export class WhatsAppAIApp {
     this.ui.setState({
       settings: this.settings,
       keyStatus: this.keyStatus,
-      prompts: this.prompts
+      prompts: this.prompts,
+      suggestedMessage: this.suggestedMessage,
+      suggestedMessagePromptId: this.suggestedMessagePromptId,
+      suggestedMessageStatus: this.suggestedMessageStatus,
+      suggestedMessageSending: this.suggestedMessageSending
     });
     this.ui.setOpen(this.settings.sidebarOpen);
 
@@ -149,15 +164,51 @@ export class WhatsAppAIApp {
     this.keyStatus = result.keyStatus;
 
     const prompts = await sendRuntime('PROMPT_LIST');
-    if (prompts.ok) this.prompts = prompts.prompts || this.prompts;
+    if (prompts.ok) {
+      this.prompts = prompts.prompts || this.prompts;
+      this.chooseSuggestedMessagePrompt();
+    }
 
     this.ui?.setState({
       settings: this.settings,
       keyStatus: this.keyStatus,
-      prompts: this.prompts
+      prompts: this.prompts,
+      suggestedMessagePromptId: this.suggestedMessagePromptId
     });
     this.ui?.setOpen(this.settings.sidebarOpen);
     this.onDraftChanged();
+  }
+
+  chooseSuggestedMessagePrompt() {
+    const enabled = this.prompts.filter(prompt => prompt.enabled);
+    if (enabled.some(prompt => prompt.id === this.suggestedMessagePromptId)) {
+      return this.suggestedMessagePromptId;
+    }
+    this.suggestedMessagePromptId =
+      enabled.find(prompt => prompt.id === DEFAULT_SUGGEST_MESSAGE_PROMPT_ID)?.id ||
+      enabled[0]?.id ||
+      '';
+    return this.suggestedMessagePromptId;
+  }
+
+  setSuggestedMessagePrompt(id) {
+    const next = this.prompts.find(prompt => prompt.id === id && prompt.enabled)?.id || '';
+    if (!next || next === this.suggestedMessagePromptId) return;
+    this.suggestedMessagePromptId = next;
+    this.clearSuggestedMessage('');
+    this.ui?.setState({ suggestedMessagePromptId: next });
+  }
+
+  clearSuggestedMessage(status = '') {
+    this.suggestedMessageGeneration += 1;
+    this.suggestedMessage = null;
+    this.suggestedMessageStatus = status;
+    this.suggestedMessageSending = false;
+    this.ui?.setState({
+      suggestedMessage: null,
+      suggestedMessageStatus: status,
+      suggestedMessageSending: false
+    });
   }
 
   async setSidebarOpen(open) {
@@ -212,6 +263,7 @@ export class WhatsAppAIApp {
     this.summary = null;
     this.chatSettings = null;
     this.ui?.clearSuggestions();
+    this.clearSuggestedMessage('');
 
     this.account = {
       id: accountId,
@@ -236,6 +288,7 @@ export class WhatsAppAIApp {
         this.summary = null;
         this.chatSettings = null;
         this.ui.clearSuggestions();
+        this.clearSuggestedMessage('');
         this.ui.setState({ chat: null, summary: null, chatSettings: null });
       }
       return;
@@ -251,6 +304,7 @@ export class WhatsAppAIApp {
     this.currentDraft = this.dom.readDraft();
     this.suppressedDraft = null;
     this.ui.clearSuggestions();
+    this.clearSuggestedMessage('');
 
     this.chat = {
       ...detected,
@@ -264,7 +318,15 @@ export class WhatsAppAIApp {
     this.chatSettingsLoading = true;
     this.chatSettings = null;
     this.lastAutoDraft = null;
-    this.ui.setState({ chat: this.chat, summary: null, chatSettings: null, chatSettingsLoading: true });
+    this.ui.setState({
+      chat: this.chat,
+      summary: null,
+      chatSettings: null,
+      chatSettingsLoading: true,
+      suggestedMessage: null,
+      suggestedMessagePromptId: this.suggestedMessagePromptId,
+      suggestedMessageStatus: ''
+    });
 
     const saved = await sendRuntime('CHAT_UPSERT', { chat: this.chat });
     if (this.chat !== selectedChat) return;
@@ -282,11 +344,13 @@ export class WhatsAppAIApp {
     this.chatSettings = context.ok ? context.chatSettings : null;
     this.chatSettingsLoading = !context.ok;
 
+    this.chooseSuggestedMessagePrompt();
     this.ui.setState({
       chat: this.chat,
       summary: this.summary,
       chatSettings: this.chatSettings,
-      chatSettingsLoading: this.chatSettingsLoading
+      chatSettingsLoading: this.chatSettingsLoading,
+      suggestedMessagePromptId: this.suggestedMessagePromptId
     });
 
     this.scheduleMessageScan(30);
@@ -344,8 +408,10 @@ export class WhatsAppAIApp {
         recentCount: 6
       });
       if (context.ok && this.chat === activeChat && !this.chatSettingsSaving && settingsRevision === this.chatSettingsRevision) {
+        const oldSummaryVersion = this.summary?.summaryVersion || 0;
         this.summary = context.summary;
         this.chatSettings = context.chatSettings;
+        if ((this.summary?.summaryVersion || 0) !== oldSummaryVersion) this.clearSuggestedMessage('');
         this.ui.setState({ summary: this.summary, chatSettings: this.chatSettings });
       }
     }
@@ -964,6 +1030,278 @@ export class WhatsAppAIApp {
     }
   }
 
+  isSuggestedMessageRequestCurrent(generation, chat, revision, summaryVersion) {
+    return generation === this.suggestedMessageGeneration &&
+      this.chat === chat &&
+      this.chatSettingsRevision === revision &&
+      this.isChatAIEnabled() &&
+      (this.summary?.summaryVersion || 0) === summaryVersion;
+  }
+
+  async generateSuggestedMessage(forceNew = false) {
+    if (!this.isChatAIEnabled() || !this.chat || !this.account) return false;
+    if (this.suggestedMessageSending) return false;
+    if (!this.keyStatus?.configured) {
+      await openOptions();
+      return false;
+    }
+    if (this.settings?.aiPaused) {
+      this.suggestedMessageStatus = 'A IA está pausada.';
+      this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+      return false;
+    }
+    if (!this.summary?.summary?.trim()) {
+      this.suggestedMessageStatus = 'Esta conversa ainda não possui resumo. Gere um resumo antes de sugerir uma mensagem.';
+      this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+      return false;
+    }
+
+    this.chooseSuggestedMessagePrompt();
+    const prompt = this.prompts.find(item => item.id === this.suggestedMessagePromptId && item.enabled);
+    if (!prompt) {
+      this.suggestedMessageStatus = 'Selecione um prompt habilitado para sugerir a mensagem.';
+      this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+      return false;
+    }
+
+    const chat = this.chat;
+    const revision = this.chatSettingsRevision;
+    const summaryVersion = this.summary.summaryVersion || 0;
+    const generation = ++this.suggestedMessageGeneration;
+    const translation = translationSettings(this.chatSettings);
+
+    const item = {
+      id: `suggest-message:${generation}`,
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId,
+      promptId: prompt.id,
+      promptName: prompt.name,
+      summaryVersion,
+      status: 'generating',
+      promptText: '',
+      finalText: '',
+      translationApplied: false,
+      translationCached: false,
+      sourceLanguage: null,
+      targetLanguage: null,
+      translationAccountId: null,
+      translationChatId: null,
+      cached: false,
+      error: '',
+      forceNew: Boolean(forceNew),
+      sendRequested: false
+    };
+
+    this.suggestedMessage = item;
+    this.suggestedMessageStatus = '';
+    this.ui.setState({
+      suggestedMessage: item,
+      suggestedMessagePromptId: this.suggestedMessagePromptId,
+      suggestedMessageStatus: ''
+    });
+
+    const result = await sendRuntime('SUGGEST_MESSAGE_GENERATE', {
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId,
+      promptId: prompt.id,
+      forceNew: Boolean(forceNew)
+    });
+
+    if (!this.isSuggestedMessageRequestCurrent(generation, chat, revision, summaryVersion)) return false;
+
+    if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) {
+      item.status = 'error';
+      item.error = result.ok ? 'A IA retornou uma mensagem vazia.' : this.userError(result);
+      this.ui.setState({ suggestedMessage: item });
+      return false;
+    }
+
+    if ((Number(result.summaryVersion) || 0) !== summaryVersion) {
+      item.status = 'error';
+      item.error = 'O resumo mudou durante a geração. Gere a mensagem novamente usando o resumo atual.';
+      this.ui.setState({ suggestedMessage: item });
+      return false;
+    }
+
+    item.promptText = result.text;
+    item.cached = Boolean(result.cached);
+    item.summaryVersion = Number(result.summaryVersion) || summaryVersion;
+    item.promptName = result.promptName || prompt.name;
+
+    if (!translation.enabled) {
+      item.finalText = item.promptText;
+      item.translationApplied = false;
+      item.status = 'success';
+      this.ui.setState({ suggestedMessage: item });
+      return true;
+    }
+
+    item.status = 'translating';
+    item.sourceLanguage = translation.myLanguage;
+    item.targetLanguage = translation.contactLanguage;
+    item.translationAccountId = chat.accountId;
+    item.translationChatId = chat.whatsappChatId;
+    this.ui.setState({ suggestedMessage: item });
+
+    const translated = await sendRuntime('TRANSLATE_TEXT', {
+      accountId: chat.accountId,
+      chatId: chat.whatsappChatId,
+      text: item.promptText,
+      direction: 'outgoing',
+      automatic: false
+    });
+
+    const currentTranslation = translationSettings(this.chatSettings);
+    if (
+      !this.isSuggestedMessageRequestCurrent(generation, chat, revision, summaryVersion) ||
+      !currentTranslation.enabled ||
+      currentTranslation.myLanguage !== translation.myLanguage ||
+      currentTranslation.contactLanguage !== translation.contactLanguage
+    ) {
+      return false;
+    }
+
+    if (!translated.ok || typeof translated.text !== 'string' || !translated.text.trim()) {
+      item.status = 'error';
+      item.finalText = '';
+      item.translationApplied = false;
+      item.error = translated.ok
+        ? `Não foi possível traduzir a mensagem para ${LANGUAGES[translation.contactLanguage]}: a tradução retornou vazia.`
+        : `Não foi possível traduzir a mensagem para ${LANGUAGES[translation.contactLanguage]}. ${this.userError(translated)}`;
+      this.ui.setState({ suggestedMessage: item });
+      return false;
+    }
+
+    item.finalText = translated.text;
+    item.translationApplied = true;
+    item.translationCached = Boolean(translated.cached);
+    item.status = 'success';
+    this.ui.setState({ suggestedMessage: item });
+    return true;
+  }
+
+  retrySuggestedMessage() {
+    return this.generateSuggestedMessage(false);
+  }
+
+  suggestedMessageFinalText() {
+    return finalSuggestionTextForChat(this.suggestedMessage, this.chatSettings, this.chat);
+  }
+
+  async useSuggestedMessage() {
+    const finalText = this.suggestedMessageFinalText();
+    if (!finalText || this.suggestedMessageSending) return false;
+
+    const current = this.dom.readDraft();
+    if (
+      current.trim() &&
+      normalizeComposerText(current) !== normalizeComposerText(finalText) &&
+      !confirm('Você já possui uma mensagem digitada. Substituí-la pela mensagem sugerida?')
+    ) {
+      return false;
+    }
+
+    const chat = this.chat;
+    this.replacingDraft = true;
+    let result;
+    try {
+      result = await this.composerBridge.replaceText(finalText, {
+        chatId: chat.whatsappChatId
+      });
+    } finally {
+      this.replacingDraft = false;
+    }
+
+    if (!result?.ok) {
+      this.suggestedMessageStatus = this.composerFailureMessage(result, 'aplicar a mensagem sugerida');
+      this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+      return false;
+    }
+
+    if (this.chat !== chat || !this.isChatAIEnabled()) return false;
+    const actualDraft = this.dom.readDraft();
+    if (normalizeComposerText(actualDraft) !== normalizeComposerText(finalText)) {
+      this.suggestedMessageStatus = 'O WhatsApp não confirmou o texto exato da mensagem sugerida.';
+      this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+      return false;
+    }
+
+    this.currentDraft = actualDraft;
+    this.suppressedDraft = actualDraft;
+    this.draftVersion += 1;
+    this.invalidateGenerations();
+    this.cancelDebounce();
+    this.ui.clearSuggestions();
+    this.suggestedMessageStatus = 'Mensagem sugerida aplicada no campo do WhatsApp.';
+    this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+    return true;
+  }
+
+  async sendSuggestedMessage() {
+    const item = this.suggestedMessage;
+    const finalText = this.suggestedMessageFinalText();
+    if (!item || !finalText || this.suggestedMessageSending || item.sendRequested) return false;
+
+    const chat = this.chat;
+    this.suggestedMessageSending = true;
+    this.suggestedMessageStatus = 'Substituindo o texto e enviando pelo WhatsApp…';
+    this.ui.setState({
+      suggestedMessageSending: true,
+      suggestedMessageStatus: this.suggestedMessageStatus
+    });
+
+    try {
+      let result;
+      this.replacingDraft = true;
+      try {
+        result = await this.composerBridge.replaceAndSend(finalText, {
+          chatId: chat.whatsappChatId
+        });
+      } finally {
+        this.replacingDraft = false;
+      }
+
+      if (!result?.ok) {
+        const sendStageFailed = ['SEND_BUTTON_NOT_FOUND', 'SEND_CLICK_FAILED', 'SEND_NOT_CONFIRMED'].includes(result?.stage);
+        const actualDraft = this.dom.readDraft();
+        if (
+          sendStageFailed &&
+          this.chat === chat &&
+          normalizeComposerText(actualDraft) === normalizeComposerText(finalText)
+        ) {
+          this.currentDraft = actualDraft;
+          this.suppressedDraft = actualDraft;
+          this.draftVersion += 1;
+          this.invalidateGenerations();
+          this.cancelDebounce();
+        }
+        this.suggestedMessageStatus = this.composerFailureMessage(result, 'enviar a mensagem sugerida');
+        this.ui.setState({ suggestedMessageStatus: this.suggestedMessageStatus });
+        return false;
+      }
+
+      item.sendRequested = true;
+      this.currentDraft = this.dom.readDraft();
+      this.suppressedDraft = null;
+      this.lastAutoDraft = null;
+      this.draftVersion += 1;
+      this.invalidateGenerations();
+      this.cancelDebounce();
+      this.ui.clearSuggestions();
+      this.suggestedMessageGeneration += 1;
+      this.suggestedMessage = null;
+      this.suggestedMessageStatus = 'Mensagem sugerida enviada pelo WhatsApp.';
+      this.ui.setState({
+        suggestedMessage: null,
+        suggestedMessageStatus: this.suggestedMessageStatus
+      });
+      return true;
+    } finally {
+      this.suggestedMessageSending = false;
+      this.ui.setState({ suggestedMessageSending: false });
+    }
+  }
+
   async generateSummary(automatic = false, forceRebuild = false) {
     if (!this.isChatAIEnabled()) return false;
     if (this.summaryRunning || !this.chat || !this.account) return false;
@@ -1000,8 +1338,10 @@ export class WhatsAppAIApp {
         recentCount: 6
       });
       if (context.ok && this.chat === activeChat && settingsRevision === this.chatSettingsRevision && !this.chatSettingsSaving) {
+        const oldSummaryVersion = this.summary?.summaryVersion || 0;
         this.summary = context.summary;
         this.chatSettings = context.chatSettings;
+        if ((this.summary?.summaryVersion || 0) !== oldSummaryVersion) this.clearSuggestedMessage('');
         this.ui.setState({ summary: this.summary, chatSettings: this.chatSettings });
       }
       return true;
@@ -1022,6 +1362,7 @@ export class WhatsAppAIApp {
       return false;
     }
     this.summary = result.record;
+    this.clearSuggestedMessage('');
     this.ui.setState({ summary: this.summary });
     return true;
   }
@@ -1040,6 +1381,7 @@ export class WhatsAppAIApp {
     this.cancelDebounce();
     this.invalidateGenerations();
     this.ui.clearSuggestions();
+    this.clearSuggestedMessage('');
     this.ui.setState({ chatSettings: this.chatSettings, chatSettingsLoading: true });
     const result = await sendRuntime('CHAT_SETTINGS_UPDATE', {
       accountId: activeChat.accountId,
@@ -1090,7 +1432,11 @@ export class WhatsAppAIApp {
     if (result.ok) {
       this.prompts = result.prompts || [];
       this.lastAutoDraft = null;
-      this.ui.setState({ prompts: this.prompts });
+      this.chooseSuggestedMessagePrompt();
+      this.ui.setState({
+        prompts: this.prompts,
+        suggestedMessagePromptId: this.suggestedMessagePromptId
+      });
       this.onDraftChanged();
     }
   }
