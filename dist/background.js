@@ -1,0 +1,1 @@
+import '../src/background/service-worker.js';

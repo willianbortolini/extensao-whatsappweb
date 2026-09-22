@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WhatsApp AI Assistant — Configurações</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="logo"></div>
+      <div>
+        <h1>WhatsApp AI Assistant</h1>
+        <p>Configurações locais da extensão. Nenhum backend próprio é utilizado.</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>OpenAI</h2>
+      <p class="muted">Cada usuário usa a própria API key. A chave nunca é enviada ao WhatsApp e não é armazenada no histórico.</p>
+
+      <div class="status" id="keyStatus">Verificando…</div>
+
+      <label>API key
+        <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…">
+      </label>
+
+      <label>Armazenamento da chave
+        <select id="keyMode">
+          <option value="session">Somente nesta sessão (mais protegido)</option>
+          <option value="local">Lembrar neste perfil do navegador</option>
+        </select>
+      </label>
+      <p class="hint">Sem backend, uma chave persistida no navegador não tem a mesma proteção de uma chave mantida em servidor. Use uma chave/projeto dedicado e limites na sua conta OpenAI.</p>
+
+      <label>Modelo
+        <input id="model" type="text" placeholder="gpt-5.6-luna">
+      </label>
+
+      <div class="actions">
+        <button id="saveKey">Salvar chave</button>
+        <button id="testKey" class="secondary">Testar conexão</button>
+        <button id="removeKey" class="danger">Remover chave</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Sugestões automáticas</h2>
+      <label class="check"><input id="automaticSuggestions" type="checkbox"> Ativar sugestões automáticas</label>
+      <label>Esperar após parar de digitar
+        <div class="inline"><input id="debounceSeconds" type="number" min="2" max="30" step="1"><span>segundos</span></div>
+      </label>
+      <label>Máximo de prompts automáticos por ciclo
+        <input id="maxAutomaticPrompts" type="number" min="1" max="20" step="1">
+      </label>
+      <p class="hint">Cada prompt automático pode gerar uma chamada separada. A extensão também limita concorrência, reutiliza cache e bloqueia loops.</p>
+    </section>
+
+    <section class="card">
+      <h2>Resumo</h2>
+      <label class="check"><input id="defaultSummaryEnabled" type="checkbox"> Habilitar resumo por padrão</label>
+      <label>Modo padrão
+        <select id="defaultSummaryMode">
+          <option value="manual">Manual</option>
+          <option value="automatic">Automático</option>
+          <option value="disabled">Desativado</option>
+        </select>
+      </label>
+      <label>Atualizar automaticamente a cada
+        <div class="inline"><input id="defaultSummaryEvery" type="number" min="2" max="50" step="1"><span>mensagens</span></div>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Histórico local</h2>
+      <label class="check"><input id="saveHistory" type="checkbox"> Salvar mensagens observadas localmente</label>
+      <label>Retenção
+        <select id="retentionDays">
+          <option value="30">30 dias</option>
+          <option value="90">90 dias</option>
+          <option value="180">180 dias</option>
+          <option value="365">1 ano</option>
+          <option value="0">Sem limite</option>
+        </select>
+      </label>
+      <p class="hint">O histórico é o que a extensão consegue observar/carregar no WhatsApp Web; não é um backup oficial do WhatsApp.</p>
+    </section>
+
+    <section class="card">
+      <h2>Proteção de consumo</h2>
+      <label>Limite diário local de tokens <small>(0 = sem limite)</small>
+        <input id="dailyTokenLimit" type="number" min="0" step="1000">
+      </label>
+      <label>Limite diário de chamadas automáticas <small>(0 = sem limite)</small>
+        <input id="dailyAutomaticRequestLimit" type="number" min="0" step="10">
+      </label>
+      <label class="check"><input id="blockAutomaticAtLimit" type="checkbox"> Bloquear chamadas automáticas ao atingir o limite</label>
+    </section>
+
+    <section class="card">
+      <h2>Uso</h2>
+      <div class="usage-grid">
+        <div><strong id="todayRequests">—</strong><span>requisições hoje</span></div>
+        <div><strong id="todayTokens">—</strong><span>tokens hoje</span></div>
+        <div><strong id="monthRequests">—</strong><span>requisições no mês</span></div>
+        <div><strong id="monthTokens">—</strong><span>tokens no mês</span></div>
+      </div>
+      <button id="refreshUsage" class="secondary">Atualizar uso</button>
+    </section>
+
+    <section class="card">
+      <h2>Dados locais</h2>
+      <div class="actions">
+        <button id="clearHistory" class="secondary">Limpar históricos</button>
+        <button id="clearSummaries" class="secondary">Limpar resumos</button>
+        <button id="clearPrompts" class="secondary">Restaurar prompts padrão</button>
+        <button id="clearAll" class="danger">Apagar todos os dados</button>
+      </div>
+    </section>
+
+    <div class="savebar">
+      <span id="message"></span>
+      <button id="saveSettings">Salvar configurações</button>
+    </div>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
