@@ -4,7 +4,7 @@ Este documento registra as decisões técnicas da implementação inicial.
 
 ## Regras fixas
 
-- Projeto independente do Locenza.
+- Projeto independente de qualquer sistema externo.
 - Sem backend.
 - Cada usuário usa sua própria chave OpenAI.
 - Manifest V3.

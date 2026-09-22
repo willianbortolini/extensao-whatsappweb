@@ -71,7 +71,7 @@ function uiFixture() {
     chat: {
       accountId: 'a',
       whatsappChatId: 'c',
-      displayName: 'Rafa',
+      displayName: 'Contato Exemplo',
       isGroup: false
     },
     settings: {
@@ -98,7 +98,7 @@ function uiFixture() {
       updatedAt: Date.now()
     },
     prompts: [
-      { id: 'local', name: 'Rafa ❤️', scope: PROMPT_SCOPE.CHAT, enabled: true, autoRun: true },
+      { id: 'local', name: 'Prompt do contato', scope: PROMPT_SCOPE.CHAT, enabled: true, autoRun: true },
       { id: 'global', name: 'Melhorar', scope: PROMPT_SCOPE.GLOBAL, enabled: true, autoRun: true }
     ]
   });
@@ -239,12 +239,12 @@ test('prompts recolhidos não renderizam lista; expandidos mostram locais e glob
     assert.match(text, /Prompts/);
     assert.match(text, /2 auto/);
     assert.match(text, /1 aqui/);
-    assert.doesNotMatch(text, /Rafa ❤️/);
+    assert.doesNotMatch(text, /Prompt do contato/);
     assert.doesNotMatch(text, /Melhorar/);
 
     ui.expandedSections.prompts = true;
     text = textOf(ui.renderPromptsSection());
-    assert.match(text, /Rafa ❤️/);
+    assert.match(text, /Prompt do contato/);
     assert.match(text, /Melhorar/);
     assert.match(text, /Para este contato/);
     assert.match(text, /Global/);

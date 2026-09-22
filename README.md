@@ -36,7 +36,7 @@ Depois de baixar, extraia o arquivo ZIP para uma pasta do computador.
 Você também pode clonar o repositório com Git:
 
 ```bash
-git clone https://github.com/willianbortolini/extensao-whatsappweb.git
+git clone <URL_DO_REPOSITORIO>
 ```
 
 ---
@@ -162,8 +162,8 @@ Além dos prompts globais, você pode criar prompts específicos para uma conver
 Exemplo:
 
 ```text
-Rafa ❤️
-Clientes Locenza
+Tom pessoal
+Atendimento comercial
 Follow-up comercial
 Atendimento técnico
 ```
