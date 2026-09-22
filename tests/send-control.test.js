@@ -79,3 +79,73 @@ test('Ctrl+Enter envia selecionada ou primeira pronta; repetição e composiçã
     if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
   }
 });
+
+test('envio procura o botão fora do compose-box quando o WhatsApp o renderiza no footer/main', async () => {
+  const previous = {
+    Element: globalThis.Element,
+    document: globalThis.document,
+    getComputedStyle: globalThis.getComputedStyle
+  };
+  let clicks = 0;
+
+  class Element {
+    constructor(name = '') { this.name = name; this.disabled = false; }
+    getBoundingClientRect() { return { width: 24, height: 24 }; }
+    getAttribute(name) { return name === 'aria-disabled' ? 'false' : null; }
+    matches(selector) { return selector === 'button, [role="button"]' && this.name === 'button'; }
+    closest(selector) {
+      if (selector === '[data-testid="compose-box"]') return composeBox;
+      if (selector === 'footer') return footer;
+      if (selector === 'button, [role="button"]' && this.name === 'icon') return button;
+      return null;
+    }
+    click() { clicks++; }
+  }
+
+  const button = new Element('button');
+  const icon = new Element('icon');
+  const composeBox = { querySelectorAll: () => [] };
+  const footer = {
+    querySelectorAll: selector => selector === '[data-icon="send"]' ? [icon] : []
+  };
+  const main = { querySelectorAll: () => [] };
+  const composer = new Element('composer');
+
+  globalThis.Element = Element;
+  globalThis.getComputedStyle = () => ({ display: 'block', visibility: 'visible', opacity: '1' });
+  globalThis.document = {
+    querySelector: selector => selector === '#main footer' ? footer : selector === '#main' ? main : null
+  };
+
+  const dom = new WhatsAppDom();
+  dom.getComposer = () => composer;
+  dom.readConversation = () => ({ whatsappChatId: 'chat' });
+  dom.readDraft = () => 'Sugestão';
+
+  try {
+    assert.equal(await dom.sendDraft('Sugestão', 'chat'), true);
+    assert.equal(clicks, 1);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('envio revalida conversa e texto imediatamente antes do clique', async () => {
+  const dom = new WhatsAppDom();
+  let allowed = true;
+  let clicks = 0;
+  const button = { click: () => { clicks++; } };
+
+  dom.readConversation = () => ({ whatsappChatId: 'chat' });
+  dom.readDraft = () => 'Sugestão';
+  dom.findSendButton = () => {
+    allowed = false;
+    return button;
+  };
+
+  assert.equal(await dom.sendDraft('Sugestão', 'chat', () => allowed), false);
+  assert.equal(clicks, 0);
+});
+

@@ -196,27 +196,78 @@ export class WhatsAppDom {
     return true;
   }
 
+  findSendButton(composer = this.getComposer()) {
+    if (!composer) return null;
+
+    const roots = [];
+    const addRoot = root => {
+      if (root && !roots.includes(root)) roots.push(root);
+    };
+
+    // WhatsApp changes the compose DOM often. Prefer the closest scope first,
+    // but fall back to the current footer and finally #main.
+    addRoot(composer.closest('[data-testid="compose-box"]'));
+    addRoot(composer.closest('footer'));
+    addRoot(document.querySelector('#main footer'));
+    addRoot(document.querySelector('#main'));
+
+    const selectors = [
+      'button[data-testid="compose-btn-send"]',
+      '[role="button"][data-testid="compose-btn-send"]',
+      'button[aria-label="Enviar"]',
+      'button[aria-label="Send"]',
+      '[role="button"][aria-label="Enviar"]',
+      '[role="button"][aria-label="Send"]',
+      'button[aria-label*="Enviar" i]',
+      'button[aria-label*="Send" i]',
+      '[role="button"][aria-label*="Enviar" i]',
+      '[role="button"][aria-label*="Send" i]',
+      '[data-testid="wds-ic-send-filled"]',
+      '[data-icon="wds-ic-send-filled"]',
+      '[data-testid="send"]',
+      '[data-testid="send-button"]',
+      '[data-icon="send"]'
+    ];
+
+    for (const root of roots) {
+      for (const selector of selectors) {
+        for (const marker of root.querySelectorAll(selector)) {
+          const control = marker.matches?.('button, [role="button"]')
+            ? marker
+            : marker.closest?.('button, [role="button"]');
+          if (!control || !visible(control)) continue;
+          if (control.disabled || control.getAttribute('aria-disabled') === 'true') continue;
+          return control;
+        }
+      }
+    }
+
+    return null;
+  }
+
   async sendDraft(expectedText, chatId, stillAllowed = () => true) {
-    // Let Lexical commit the inserted text before clicking its send control.
-    await new Promise(resolve => setTimeout(resolve, 50));
-    for (let attempt = 0; attempt < 20; attempt++) {
-      if (!stillAllowed() || this.readConversation()?.whatsappChatId !== chatId || this.readDraft() !== normalizeWhitespace(expectedText)) return false;
-      const composer = this.getComposer();
-      const composeBox = composer?.closest('[data-testid="compose-box"]') || composer?.closest('footer');
-      if (!composeBox) return false;
-      const marker = firstVisible([
-        'button[data-testid="compose-btn-send"]',
-        'button[aria-label="Enviar"]', 'button[aria-label="Send"]',
-        '[data-testid="wds-ic-send-filled"]', '[data-icon="wds-ic-send-filled"]',
-        '[data-testid="send"]', '[data-icon="send"]'
-      ], composeBox);
-      const button = marker?.closest('button, [role="button"]');
-      if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
+    const normalizedExpected = normalizeWhitespace(expectedText);
+
+    // Let Lexical/React commit the inserted text before locating the send control.
+    await new Promise(resolve => setTimeout(resolve, 80));
+    for (let attempt = 0; attempt < 25; attempt++) {
+      if (!stillAllowed()) return false;
+      if (this.readConversation()?.whatsappChatId !== chatId) return false;
+      if (this.readDraft() !== normalizedExpected) return false;
+
+      const button = this.findSendButton();
+      if (button) {
+        // Revalidate immediately before the click so a chat switch or draft edit
+        // can never send the suggestion to the wrong conversation.
+        if (!stillAllowed()) return false;
+        if (this.readConversation()?.whatsappChatId !== chatId) return false;
+        if (this.readDraft() !== normalizedExpected) return false;
         button.click();
         return true;
       }
-      // The composer may need a render before its send button becomes available.
-      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // The composer may need another render before its send button appears.
+      await new Promise(resolve => setTimeout(resolve, 60));
     }
     return false;
   }
