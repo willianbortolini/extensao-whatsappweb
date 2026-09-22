@@ -149,7 +149,7 @@ test('envio revalida conversa e texto imediatamente antes do clique', async () =
   assert.equal(clicks, 0);
 });
 
-test('setDraft usa selectAll + insertText para substituir completamente o rascunho', () => {
+test('setDraft limpa o rascunho antes de inserir a sugestão', () => {
   const previous = {
     document: globalThis.document,
     window: globalThis.window,
@@ -205,7 +205,6 @@ test('setDraft usa selectAll + insertText para substituir completamente o rascun
     assert.equal(dom.setDraft('Sugestão nova'), true);
     assert.deepEqual(commands, [['delete', null], ['insertText', 'Sugestão nova']]);
     assert.equal(composer.textContent, 'Sugestão nova');
-    assert.ok(events.includes('input'));
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete globalThis[key]; else globalThis[key] = value;

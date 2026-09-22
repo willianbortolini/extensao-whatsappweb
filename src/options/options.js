@@ -31,7 +31,7 @@ function renderKeyStatus() {
 function fillSettings() {
   $('model').value = settings.model || 'gpt-5.6-luna';
   $('automaticSuggestions').checked = settings.automaticSuggestions !== false;
-  $('debounceSeconds').value = Math.round((settings.debounceMs || 5000) / 1000);
+  $('debounceSeconds').value = 5;
   $('maxAutomaticPrompts').value = settings.maxAutomaticPrompts || 3;
   $('defaultSummaryEnabled').checked = settings.defaultSummaryEnabled !== false;
   $('defaultSummaryMode').value = settings.defaultSummaryMode || 'manual';
@@ -47,7 +47,7 @@ function collectSettings() {
   return {
     model: $('model').value.trim() || 'gpt-5.6-luna',
     automaticSuggestions: $('automaticSuggestions').checked,
-    debounceMs: Math.max(2, Math.min(30, number('debounceSeconds', 5))) * 1000,
+    debounceMs: 5000,
     maxAutomaticPrompts: Math.max(1, Math.min(20, number('maxAutomaticPrompts', 3))),
     defaultSummaryEnabled: $('defaultSummaryEnabled').checked,
     defaultSummaryMode: $('defaultSummaryMode').value,

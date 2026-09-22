@@ -71,7 +71,7 @@ function sanitizeSettings(settings) {
     sidebarOpen: settings.sidebarOpen !== false,
     aiPaused: Boolean(settings.aiPaused),
     automaticSuggestions: settings.automaticSuggestions !== false,
-    debounceMs: Math.max(2000, Math.min(30000, Number(settings.debounceMs) || CONFIG.defaultDebounceMs)),
+    debounceMs: CONFIG.defaultDebounceMs,
     model: String(settings.model || CONFIG.defaultModel).slice(0, 100),
     maxAutomaticPrompts: Math.max(1, Math.min(20, Number(settings.maxAutomaticPrompts) || 3)),
     defaultSummaryEnabled: settings.defaultSummaryEnabled !== false,

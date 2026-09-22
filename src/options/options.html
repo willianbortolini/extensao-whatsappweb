@@ -49,12 +49,12 @@
       <h2>Sugestões automáticas</h2>
       <label class="check"><input id="automaticSuggestions" type="checkbox"> Ativar sugestões automáticas</label>
       <label>Esperar após parar de digitar
-        <div class="inline"><input id="debounceSeconds" type="number" min="2" max="30" step="1"><span>segundos</span></div>
+        <div class="inline"><input id="debounceSeconds" type="number" value="5" min="5" max="5" step="1" disabled><span>segundos</span></div>
       </label>
       <label>Máximo de prompts automáticos por ciclo
         <input id="maxAutomaticPrompts" type="number" min="1" max="20" step="1">
       </label>
-      <p class="hint">Cada prompt automático pode gerar uma chamada separada. A extensão também limita concorrência, reutiliza cache e bloqueia loops.</p>
+      <p class="hint">A sugestão automática roda uma única vez após 5 segundos sem digitação. Ao editar o texto, uma nova espera de 5 segundos começa. Ctrl+Espaço gera imediatamente. Cada prompt automático pode gerar uma chamada separada.</p>
     </section>
 
     <section class="card">
