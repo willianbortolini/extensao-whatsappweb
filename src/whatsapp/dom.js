@@ -167,10 +167,9 @@ export class WhatsAppDom {
     // Use the browser editing commands WhatsApp/Lexical already listens to.
     // Selecting with a DOM Range can visually replace the text without updating
     // WhatsApp's internal editor state, which leaves the send action unavailable.
-    let selected = false;
     let inserted = false;
     try {
-      selected = document.execCommand('selectAll', false, null);
+      document.execCommand('selectAll', false, null);
       inserted = document.execCommand('insertText', false, value);
     } catch {}
 
@@ -275,14 +274,7 @@ export class WhatsAppDom {
         if (this.readConversation()?.whatsappChatId !== chatId) return false;
         if (this.readDraft() !== normalizedExpected) return false;
         button.click();
-
-        // A successful WhatsApp send clears the composer. Give React/Lexical a
-        // short moment to commit that state before considering the action done.
-        for (let verify = 0; verify < 10; verify++) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-          if (this.readConversation()?.whatsappChatId !== chatId) return true;
-          if (!this.readDraft()) return true;
-        }
+        return true;
       }
 
       // If the current WhatsApp build does not expose a stable send-button
