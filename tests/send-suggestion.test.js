@@ -69,9 +69,12 @@ test('Usar substitui a mensagem sem enviar', async () => {
   assert.deepEqual(events, [['replace', 'Sugestão revisada']]);
 });
 
-test('falha do bridge mantém a sugestão e não declara envio', async () => {
-  const { app, events } = appFixture(false);
-  app.composerBridge.replaceAndSend = async () => ({ ok: false, stage: 'SEND_BUTTON_NOT_FOUND' });
+test('falha do envio mantém a sugestão, sincroniza o draft aplicado e não declara sucesso', async () => {
+  const { app, events, getDraft } = appFixture(false);
+  app.composerBridge.replaceAndSend = async text => {
+    app.dom.readDraft = () => text;
+    return { ok: false, stage: 'SEND_BUTTON_NOT_FOUND', method: 'lexical' };
+  };
   const states = [];
   app.ui.setState = state => states.push(state);
 
@@ -79,6 +82,9 @@ test('falha do bridge mantém a sugestão e não declara envio', async () => {
   assert.equal(await app.applyAndSendSuggestion(item), false);
   assert.equal(item.sendRequested, undefined);
   assert.deepEqual(events, []);
+  assert.equal(app.currentDraft, 'Mensagem de teste.');
+  assert.equal(app.suppressedDraft, 'Mensagem de teste.');
+  assert.equal(getDraft(), 'Rascunho original');
   assert.match(states.find(state => state.sendStatus)?.sendStatus || '', /botão real de enviar/i);
 });
 

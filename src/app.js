@@ -698,6 +698,24 @@ export class WhatsAppAIApp {
 
       if (!result?.ok) {
         console.warn('[WAI] Falha na transação de substituir e enviar:', result);
+
+        const sendStageFailed = ['SEND_BUTTON_NOT_FOUND', 'SEND_CLICK_FAILED', 'SEND_NOT_CONFIRMED'].includes(result?.stage);
+        const stillSameChat = this.chat === prepared.chat &&
+          (!this.dom.readConversation || this.dom.readConversation()?.whatsappChatId === prepared.chat.whatsappChatId);
+        const actualDraft = this.dom.readDraft();
+        if (
+          sendStageFailed &&
+          stillSameChat &&
+          normalizeComposerText(actualDraft) === normalizeComposerText(prepared.text)
+        ) {
+          this.currentDraft = actualDraft;
+          this.suppressedDraft = actualDraft;
+          this.lastAutoDraft = null;
+          this.draftVersion += 1;
+          this.invalidateGenerations();
+          this.cancelDebounce();
+        }
+
         this.ui.setState({ sendStatus: this.composerFailureMessage(result, 'substituir e enviar a sugestão') });
         return false;
       }
