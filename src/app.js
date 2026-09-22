@@ -27,6 +27,7 @@ export class WhatsAppAIApp {
     this.suppressedDraft = null;
     this.lastAutoDraft = null;
     this.isComposing = false;
+    this.replacingDraft = false;
     this.debounceTimer = null;
     this.draftVersion = 0;
     this.generationVersion = 0;
@@ -360,6 +361,7 @@ export class WhatsAppAIApp {
   }
 
   onDraftChanged() {
+    if (this.replacingDraft) return;
     const draft = this.dom.readDraft();
     if (draft !== this.currentDraft) {
       this.currentDraft = draft;
@@ -561,15 +563,18 @@ export class WhatsAppAIApp {
       }
     }
     if (this.chat !== selectedChat || (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== selectedChat.whatsappChatId)) return;
-    const previousSuppressedDraft = this.suppressedDraft;
-    const previousCurrentDraft = this.currentDraft;
+
+    this.replacingDraft = true;
+    let applied = false;
+    try {
+      applied = this.dom.setDraft(text);
+    } finally {
+      this.replacingDraft = false;
+    }
+    if (!applied) return;
+
     this.suppressedDraft = text.trim();
     this.currentDraft = text.trim();
-    if (!this.dom.setDraft(text)) {
-      this.suppressedDraft = previousSuppressedDraft;
-      this.currentDraft = previousCurrentDraft;
-      return;
-    }
     this.draftVersion += 1;
     this.invalidateGenerations();
     this.cancelDebounce();

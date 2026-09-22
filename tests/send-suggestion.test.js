@@ -63,3 +63,26 @@ test('opção Usar continua aplicando sem enviar', async () => {
   await app.useSuggestion({ text: 'Revisar antes de enviar' });
   assert.deepEqual(events, [['apply', 'Revisar antes de enviar']]);
 });
+
+test('evento input disparado durante substituição interna não apaga sugestões', () => {
+  const app = Object.create(WhatsAppAIApp.prototype);
+  let cleared = 0;
+  Object.assign(app, {
+    replacingDraft: true,
+    currentDraft: 'Texto antigo',
+    lastAutoDraft: null,
+    draftVersion: 1,
+    generationVersion: 1,
+    isComposing: false,
+    settings: {},
+    prompts: [],
+    suppressedDraft: null,
+    dom: { readDraft: () => 'Sugestão nova' },
+    ui: { clearSuggestions: () => { cleared++; } }
+  });
+
+  app.onDraftChanged();
+  assert.equal(cleared, 0);
+  assert.equal(app.currentDraft, 'Texto antigo');
+});
+

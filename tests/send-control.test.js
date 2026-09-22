@@ -240,3 +240,59 @@ test('sendDraft usa Enter como fallback e só confirma envio quando o WhatsApp l
   }
 });
 
+test('setDraft não confia em execCommand=true quando o WhatsApp mantém o texto antigo', () => {
+  const previous = {
+    document: globalThis.document,
+    window: globalThis.window,
+    InputEvent: globalThis.InputEvent,
+    Event: globalThis.Event
+  };
+  const events = [];
+  const composer = {
+    textContent: 'texto antigo',
+    innerText: 'texto antigo',
+    focus() {},
+    dispatchEvent(event) { events.push(event.type); },
+    replaceChildren(node) {
+      this.textContent = node.textContent;
+      this.innerText = node.textContent;
+    }
+  };
+
+  globalThis.InputEvent = class {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.Event = class {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.window = {
+    getSelection: () => ({
+      removeAllRanges() {},
+      addRange() {}
+    })
+  };
+  globalThis.document = {
+    execCommand() {
+      return true; // Chromium can report success while editor content stays unchanged.
+    },
+    createRange: () => ({
+      selectNodeContents() {},
+      collapse() {}
+    }),
+    createTextNode: text => ({ textContent: text })
+  };
+
+  const dom = new WhatsAppDom();
+  dom.getComposer = () => composer;
+
+  try {
+    assert.equal(dom.setDraft('Sugestão nova'), true);
+    assert.equal(composer.textContent, 'Sugestão nova');
+    assert.ok(events.includes('input'));
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+

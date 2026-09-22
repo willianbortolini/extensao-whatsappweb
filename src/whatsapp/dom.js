@@ -160,51 +160,84 @@ export class WhatsAppDom {
   setDraft(text) {
     const composer = this.getComposer();
     if (!composer) return false;
+
     const value = String(text || '');
+    const expected = normalizeWhitespace(value);
+    const current = () => normalizeWhitespace(composer.innerText || composer.textContent || '');
+    const selectComposer = () => {
+      const selection = window.getSelection?.();
+      const range = document.createRange?.();
+      if (!selection || !range) return false;
+      range.selectNodeContents(composer);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return true;
+    };
+    const notifyInput = () => {
+      try {
+        composer.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: value
+        }));
+      } catch {
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
+    const moveCaretToEnd = () => {
+      try {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(composer);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } catch {}
+    };
 
     composer.focus();
 
-    // Use the browser editing commands WhatsApp/Lexical already listens to.
-    // Selecting with a DOM Range can visually replace the text without updating
-    // WhatsApp's internal editor state, which leaves the send action unavailable.
-    let inserted = false;
+    // 1) Prefer an editing command with an explicit selection restricted to the
+    // WhatsApp composer. Do not trust execCommand's boolean return value:
+    // Chromium can return true even when Lexical keeps the previous content.
     try {
-      document.execCommand('selectAll', false, null);
-      inserted = document.execCommand('insertText', false, value);
+      selectComposer();
+      document.execCommand('insertText', false, value);
     } catch {}
+    if (current() === expected) {
+      moveCaretToEnd();
+      return true;
+    }
 
-    if (!inserted) {
-      const selection = window.getSelection?.();
-      const range = document.createRange?.();
-      if (selection && range) {
-        range.selectNodeContents(composer);
-        selection.removeAllRanges();
-        selection.addRange(range);
+    // 2) Some WhatsApp/Lexical builds only accept replacement after a separate
+    // delete operation.
+    try {
+      selectComposer();
+      document.execCommand('delete', false, null);
+      document.execCommand('insertText', false, value);
+    } catch {}
+    if (current() === expected) {
+      moveCaretToEnd();
+      return true;
+    }
+
+    // 3) Last-resort DOM replacement. Dispatch input afterwards so React/Lexical
+    // can reconcile its internal state from the contenteditable value.
+    try {
+      if (typeof composer.replaceChildren === 'function' && typeof document.createTextNode === 'function') {
+        composer.replaceChildren(document.createTextNode(value));
+      } else {
+        composer.textContent = value;
+        if ('innerText' in composer) composer.innerText = value;
       }
-      composer.textContent = value;
-    }
-
-    try {
-      composer.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: value
-      }));
+      notifyInput();
     } catch {
-      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      return false;
     }
 
-    // Keep the caret at the end for the normal "Usar" action.
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(composer);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    } catch {}
-
-    return normalizeWhitespace(composer.innerText || composer.textContent || '') === normalizeWhitespace(value);
+    const replaced = current() === expected;
+    if (replaced) moveCaretToEnd();
+    return replaced;
   }
 
   findSendButton(composer = this.getComposer()) {
