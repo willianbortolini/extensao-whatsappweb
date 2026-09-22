@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { LANGUAGES, translationSettings } from './ai/translation.js';
+import { LANGUAGES, translationSettings, translatedSuggestionForChat } from './ai/translation.js';
 
 function el(tag, options = {}, children = []) {
   const node = document.createElement(tag);
@@ -191,10 +191,12 @@ export class SidebarUI {
             ])
           );
         } else {
+          const translatedText = translatedSuggestionForChat(item, this.chatSettings, this.chat);
           card.append(
-            el('div', { className: 'wai-suggestion-text', text: item.text || '' }),
+            translatedText ? el('div', { className: 'wai-help', text: 'Tradução pronta para envio:' }) : null,
+            el('div', { className: 'wai-suggestion-text', text: translatedText || item.text || '' }),
             el('div', { className: 'wai-suggestion-actions' }, [
-              el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : translationSettings(this.chatSettings).enabled ? 'Traduzir e aplicar' : 'Usar', disabled: this.applyingTranslation || this.sendingSuggestion, onClick: () => this.handlers.onUseSuggestion?.(item) }),
+              el('button', { className: 'wai-btn secondary small', type: 'button', text: this.applyingTranslation ? 'Traduzindo…' : translatedText ? 'Usar tradução' : translationSettings(this.chatSettings).enabled ? 'Traduzir e aplicar' : 'Usar', disabled: this.applyingTranslation || this.sendingSuggestion, onClick: () => this.handlers.onUseSuggestion?.(item) }),
               el('button', { className: 'wai-btn small', type: 'button', text: this.sendingSuggestion ? 'Enviando…' : 'Aplicar e enviar', title: 'Substitui o rascunho pela sugestão e envia a mensagem ao contato', disabled: this.applyingTranslation || this.sendingSuggestion || item.sendRequested, onClick: () => this.handlers.onSendSuggestion?.(item) })
             ])
           );

@@ -4,7 +4,7 @@ import { WhatsAppDom } from './whatsapp/dom.js';
 import { WhatsAppComposerBridge, normalizeComposerText } from './whatsapp/composer-bridge.js';
 import { SidebarUI } from './ui.js';
 import { injectStyles } from './styles.js';
-import { LANGUAGES, translationSettings } from './ai/translation.js';
+import { LANGUAGES, translationSettings, translatedSuggestionForChat } from './ai/translation.js';
 
 export class WhatsAppAIApp {
   constructor() {
@@ -583,34 +583,80 @@ export class WhatsAppAIApp {
     if (this.dom.readConversation && this.dom.readConversation()?.whatsappChatId !== chat.whatsappChatId) return null;
 
     let text = item.text;
-    if (translationSettings(this.chatSettings).enabled) {
-      const draft = this.dom.readDraft();
-      this.applyingTranslation = true;
-      this.cancelDebounce();
-      this.ui.setState({ applyingTranslation: true, translationStatus: 'Traduzindo para o idioma do contato…' });
-      try {
-        const result = await sendRuntime('TRANSLATE_TEXT', {
-          accountId: chat.accountId,
-          chatId: chat.whatsappChatId,
-          text,
-          direction: 'outgoing'
-        });
+    const translation = translationSettings(this.chatSettings);
+    if (translation.enabled) {
+      // A translated suggestion previously applied with "Traduzir e aplicar"
+      // is the text the user has already reviewed. Reuse that exact version
+      // for "Aplicar e enviar"/Ctrl+Enter instead of returning to item.text.
+      const approvedTranslation = translatedSuggestionForChat(item, this.chatSettings, chat);
+      if (approvedTranslation) {
+        text = approvedTranslation;
+      } else {
+        const draft = this.dom.readDraft();
+        this.applyingTranslation = true;
+        this.cancelDebounce();
+        this.ui.setState({ applyingTranslation: true, translationStatus: 'Traduzindo para o idioma do contato…' });
+        try {
+          const result = await sendRuntime('TRANSLATE_TEXT', {
+            accountId: chat.accountId,
+            chatId: chat.whatsappChatId,
+            text: item.text,
+            direction: 'outgoing'
+          });
 
-        if (this.chat !== chat || this.chatSettingsRevision !== revision || !this.isChatAIEnabled()) return null;
-        if (!result.ok) {
-          this.ui.setState({ translationStatus: this.userError(result) });
-          return null;
-        }
-        if (this.dom.readDraft() !== draft) {
-          this.ui.setState({ translationStatus: 'Você alterou o rascunho. A tradução não foi aplicada; tente novamente.' });
-          return null;
-        }
+          const currentTranslation = translationSettings(this.chatSettings);
+          if (
+            this.chat !== chat ||
+            this.chatSettingsRevision !== revision ||
+            !this.isChatAIEnabled() ||
+            !currentTranslation.enabled ||
+            currentTranslation.myLanguage !== translation.myLanguage ||
+            currentTranslation.contactLanguage !== translation.contactLanguage
+          ) {
+            this.suggestionPreparationError = 'A conversa ou os idiomas mudaram durante a tradução. Nada foi enviado.';
+            this.ui.setState({ sendStatus: this.suggestionPreparationError });
+            return null;
+          }
 
-        text = result.text;
-        this.ui.setState({ translationStatus: 'Tradução pronta para aplicar.' });
-      } finally {
-        this.applyingTranslation = false;
-        this.ui.setState({ applyingTranslation: false });
+          if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) {
+            const reason = result.ok ? 'A tradução retornou um texto vazio.' : this.userError(result);
+            this.suggestionPreparationError = 'Não foi possível traduzir a sugestão. Nada foi enviado. ' + reason;
+            this.ui.setState({
+              translationStatus: this.suggestionPreparationError,
+              sendStatus: this.suggestionPreparationError
+            });
+            return null;
+          }
+
+          if (this.dom.readDraft() !== draft) {
+            this.suggestionPreparationError = 'Você alterou o rascunho durante a tradução. Nada foi enviado.';
+            this.ui.setState({
+              translationStatus: this.suggestionPreparationError,
+              sendStatus: this.suggestionPreparationError
+            });
+            return null;
+          }
+
+          text = result.text;
+          // Associate the approved translation with the source suggestion,
+          // account, conversation and language pair. It cannot be reused in
+          // another chat or after the source text / languages change.
+          Object.assign(item, {
+            translatedText: text,
+            translationSourceText: item.text,
+            translationAccountId: chat.accountId,
+            translationChatId: chat.whatsappChatId,
+            translationMyLanguage: translation.myLanguage,
+            translationContactLanguage: translation.contactLanguage
+          });
+          if (this.ui?.suggestions?.includes(item)) {
+            this.ui.setSuggestions([...this.ui.suggestions]);
+          }
+          this.ui.setState({ translationStatus: 'Tradução pronta para aplicar e enviar.' });
+        } finally {
+          this.applyingTranslation = false;
+          this.ui.setState({ applyingTranslation: false });
+        }
       }
     }
 
@@ -676,13 +722,16 @@ export class WhatsAppAIApp {
     if (!item?.text?.trim() || !this.isChatAIEnabled() || this.sendingSuggestion || this.applyingTranslation || item.sendRequested) return false;
 
     this.sendingSuggestion = true;
+    this.suggestionPreparationError = '';
     this.cancelDebounce();
     this.ui.setState({ sendingSuggestion: true, sendStatus: 'Substituindo o texto e enviando pelo WhatsApp…' });
 
     try {
       const prepared = await this.prepareSuggestionAction(item);
       if (!prepared) {
-        this.ui.setState({ sendStatus: 'Envio cancelado. A conversa ou o rascunho mudou durante a operação.' });
+        if (!this.suggestionPreparationError) {
+          this.ui.setState({ sendStatus: 'Envio cancelado. A conversa ou o rascunho mudou durante a operação.' });
+        }
         return false;
       }
 

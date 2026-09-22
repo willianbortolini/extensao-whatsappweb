@@ -128,3 +128,128 @@ test('tradução é resolvida antes da transação de envio e mudança de conver
     else globalThis.chrome = previousChrome;
   }
 });
+
+
+test('aplicar e enviar reutiliza a tradução previamente aplicada, não o texto original do card', async () => {
+  const previousChrome = globalThis.chrome;
+  const { app, events, getDraft } = appFixture(true);
+  const item = { text: 'Mensagem de teste.' };
+  const requests = [];
+  globalThis.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message);
+        callback({ ok: true, text: 'Test message.' });
+      }
+    }
+  };
+
+  try {
+    assert.equal(await app.useSuggestion(item), true);
+    assert.equal(getDraft(), 'Test message.');
+    assert.equal(item.text, 'Mensagem de teste.');
+    assert.equal(item.translatedText, 'Test message.');
+    assert.equal(item.translationContactLanguage, 'en');
+    assert.equal(requests.length, 1);
+
+    assert.equal(await app.applyAndSendSuggestion(item), true);
+    assert.equal(requests.length, 1, 'não traduzir novamente a sugestão já aprovada');
+    assert.deepEqual(events, [
+      ['replace', 'Test message.'],
+      ['replace-and-send', 'Test message.'],
+      ['clear-suggestions']
+    ]);
+    assert.equal(item.sendRequested, true);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('Aplicar e enviar traduz a sugestão antes de enviar mesmo sem clicar em Usar', async () => {
+  const previousChrome = globalThis.chrome;
+  const { app, events } = appFixture(true);
+  const requests = [];
+  globalThis.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message);
+        callback({ ok: true, text: 'Test message.' });
+      }
+    }
+  };
+
+  try {
+    assert.equal(await app.applyAndSendSuggestion({ text: 'Mensagem de teste.' }), true);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].type, 'TRANSLATE_TEXT');
+    assert.equal(requests[0].payload.direction, 'outgoing');
+    assert.deepEqual(events, [
+      ['replace-and-send', 'Test message.'],
+      ['clear-suggestions']
+    ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('se idioma do contato mudar, não reutiliza tradução do idioma antigo', async () => {
+  const previousChrome = globalThis.chrome;
+  const { app, events } = appFixture(true);
+  const requests = [];
+  globalThis.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message);
+        callback({ ok: true, text: requests.length === 1 ? 'Good morning' : 'Buenos días' });
+      }
+    }
+  };
+
+  try {
+    const item = { text: 'Bom dia' };
+    assert.equal(await app.useSuggestion(item), true);
+    assert.equal(item.translatedText, 'Good morning');
+
+    app.chatSettings = { ...app.chatSettings, contactLanguage: 'es' };
+    app.chatSettingsRevision += 1;
+    assert.equal(await app.applyAndSendSuggestion(item), true);
+    assert.equal(requests.length, 2);
+    assert.equal(item.translationContactLanguage, 'es');
+    assert.deepEqual(events, [
+      ['replace', 'Good morning'],
+      ['replace-and-send', 'Buenos días'],
+      ['clear-suggestions']
+    ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('falha na tradução impede enviar o texto original e mantém erro específico', async () => {
+  const previousChrome = globalThis.chrome;
+  const { app, events } = appFixture(true);
+  const statuses = [];
+  app.ui.setState = state => statuses.push(state);
+  globalThis.chrome = {
+    runtime: {
+      sendMessage(_message, callback) {
+        callback({ ok: false, error: 'OPENAI_NETWORK', message: 'Falha de rede' });
+      }
+    }
+  };
+
+  try {
+    const item = { text: 'Mensagem de teste.' };
+    assert.equal(await app.applyAndSendSuggestion(item), false);
+    assert.deepEqual(events, []);
+    assert.equal(item.sendRequested, undefined);
+    assert.match(statuses.find(state => /Não foi possível traduzir/i.test(state.sendStatus || ''))?.sendStatus || '', /Não foi possível traduzir/i);
+    assert.equal(app.sendingSuggestion, false);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});

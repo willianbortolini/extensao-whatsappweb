@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WhatsAppAIApp } from '../src/app.js';
+import { translatedSuggestionForChat } from '../src/ai/translation.js';
 
 test('aplicar escreve só a tradução e descarta resultado após edição, troca de conversa ou erro', async () => {
   const previousChrome = globalThis.chrome;
@@ -76,4 +77,26 @@ test('aplicar escreve só a tradução e descarta resultado após edição, troc
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
   }
+});
+
+
+test('texto traduzido só é reutilizado na mesma conta, conversa e par de idiomas', () => {
+  const item = {
+    text: 'Mensagem de teste.',
+    translatedText: 'Test message.',
+    translationSourceText: 'Mensagem de teste.',
+    translationAccountId: 'a',
+    translationChatId: 'c',
+    translationMyLanguage: 'pt-BR',
+    translationContactLanguage: 'en'
+  };
+  const chat = { accountId: 'a', whatsappChatId: 'c' };
+  const settings = { translationEnabled: true, myLanguage: 'pt-BR', contactLanguage: 'en' };
+
+  assert.equal(translatedSuggestionForChat(item, settings, chat), 'Test message.');
+  assert.equal(translatedSuggestionForChat(item, { ...settings, translationEnabled: false }, chat), '');
+  assert.equal(translatedSuggestionForChat(item, { ...settings, contactLanguage: 'es' }, chat), '');
+  assert.equal(translatedSuggestionForChat(item, settings, { ...chat, whatsappChatId: 'other' }), '');
+  assert.equal(translatedSuggestionForChat(item, settings, { ...chat, accountId: 'other' }), '');
+  assert.equal(translatedSuggestionForChat({ ...item, text: 'Mensagem alterada' }, settings, chat), '');
 });

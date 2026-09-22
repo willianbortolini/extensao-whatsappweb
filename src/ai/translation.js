@@ -30,3 +30,25 @@ export function localizeSuggestion(built, settings) {
     instructions: `${built.instructions}\nModo tradução: escreva o resultado exclusivamente em ${LANGUAGES[translation.myLanguage]}, mesmo que o prompt peça outro idioma. O usuário revisará este texto; a tradução para o contato ocorrerá somente ao aplicar.`
   };
 }
+
+/**
+ * Return the version already translated and approved for this precise
+ * conversation/language pair. Never treat the original suggestion as translated.
+ */
+export function translatedSuggestionForChat(item, settings, chat) {
+  const translation = translationSettings(settings);
+  if (
+    !translation.enabled ||
+    !chat ||
+    typeof item?.translatedText !== 'string' ||
+    !item.translatedText.trim() ||
+    item.translationSourceText !== item.text ||
+    item.translationAccountId !== chat.accountId ||
+    item.translationChatId !== chat.whatsappChatId ||
+    item.translationMyLanguage !== translation.myLanguage ||
+    item.translationContactLanguage !== translation.contactLanguage
+  ) {
+    return '';
+  }
+  return item.translatedText;
+}
