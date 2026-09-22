@@ -1,330 +1,236 @@
-# WhatsApp AI Assistant
+# Assistente IA para WhatsApp Web
 
-Extensão Chrome Manifest V3 para usar IA como copiloto de escrita dentro do WhatsApp Web.
+Extensão para Google Chrome que adiciona um assistente de IA diretamente ao WhatsApp Web.
 
-O projeto é **local-first e BYOK (Bring Your Own Key)**: não existe backend próprio e cada usuário configura sua própria API key da OpenAI.
+Ela ajuda a melhorar mensagens que você está escrevendo, sugerir a próxima mensagem de uma conversa, criar prompts personalizados por contato, resumir conversas e traduzir mensagens quando necessário.
 
-## Funcionalidades
+A extensão utiliza a sua própria chave da API da OpenAI e **não envia mensagens automaticamente**. Você sempre revisa e decide o que será enviado.
 
-- Barra lateral fixa à direita do WhatsApp Web.
-- Checkbox **Usar IA neste contato** (ou grupo), salvo por conta e conversa. Desmarcar bloqueia sugestões e resumos, manuais e automáticos, incluindo chamadas ainda na fila. Chamadas já enviadas não podem ser desfeitas. Por padrão, a opção vem desmarcada: a IA só funciona após habilitação explícita naquela conversa.
-- Oculta automaticamente a barra quando o WhatsApp abre imagem, vídeo, documento ou outro visualizador e restaura ao fechar.
-- Detecta o rascunho digitado e, por padrão, espera 5 segundos sem alterações.
-- Vários prompts configuráveis pelo usuário.
-- Vários resultados de IA no mesmo ciclo.
-- `Tab` / `Shift+Tab` percorrem sugestões.
-- `Enter` e `Shift+Enter` não são interceptados: continuam enviando e quebrando linha no WhatsApp, respectivamente.
-- `Ctrl+Enter` aplica e envia a sugestão selecionada (ou a primeira pronta se nenhuma estiver selecionada), com o foco no campo de mensagem. No modo tradução, traduz antes de enviar. Manter as teclas pressionadas não repete o envio.
-- **Aplicar e enviar**, em cada sugestão, substitui o rascunho e aciona o envio no WhatsApp mediante clique explícito. No modo tradução, traduz primeiro para o idioma do contato. Os botões **Usar / Traduzir e aplicar** apenas preenchem o campo para revisão.
-- `Alt+1..9` aplica diretamente uma sugestão pronta.
-- A IA **nunca envia a mensagem automaticamente**.
-- Histórico observado armazenado localmente em IndexedDB.
-- Separação por conta do WhatsApp e por conversa/grupo.
-- Resumo manual, automático e incremental por conversa.
-- Cada prompt decide se recebe resumo e/ou mensagens recentes.
-- Variáveis: `{{texto}}`, `{{resumo}}`, `{{mensagens}}`, `{{nome_contato}}`.
-- API key em sessão ou persistida localmente.
-- Chave nunca é entregue ao content script nem inserida no DOM do WhatsApp.
-- OpenAI Responses API com `store: false`.
-- Cache local, debounce, fila, limite de concorrência, rate limit e limites diários.
-- Contabilização local de tokens retornados pela API.
-- Sem telemetria externa.
+## Principais recursos
 
-## Instalação para desenvolvimento
+- Sugestões de mensagens enquanto você escreve.
+- **Sugerir mensagem** com base no contexto da conversa.
+- Prompts globais e prompts específicos por contato ou grupo.
+- Resumo de conversas.
+- Tradução por conversa.
+- Botões **Usar** e **Aplicar e enviar**.
+- Atalhos de teclado para agilizar o atendimento.
+- Configuração individual de IA por contato ou grupo.
 
-1. Clone este repositório.
-2. Abra `chrome://extensions`.
-3. Ative **Modo do desenvolvedor**.
-4. Clique em **Carregar sem compactação**.
-5. Selecione a pasta do repositório.
-6. Abra `https://web.whatsapp.com/`.
-7. Na barra lateral, abra **Configurações** e informe sua API key.
+---
 
-Não há dependências de runtime ou etapa de build obrigatória. Os arquivos de `dist/` são loaders pequenos e o código principal usa ES Modules empacotados na própria extensão.
+# Instalação no Google Chrome
 
-## OpenAI
+## 1. Baixe a extensão
 
-O modelo padrão é:
+Na página deste repositório no GitHub, clique em:
 
 ```text
-gpt-5.6-luna
+Code
+↓
+Download ZIP
 ```
 
-Ele pode ser alterado nas configurações.
+Depois de baixar, extraia o arquivo ZIP para uma pasta do computador.
 
-A extensão usa:
+Você também pode clonar o repositório com Git:
+
+```bash
+git clone https://github.com/willianbortolini/extensao-whatsappweb.git
+```
+
+---
+
+## 2. Abra a página de extensões do Chrome
+
+No Google Chrome, abra:
 
 ```text
-POST https://api.openai.com/v1/responses
+chrome://extensions
 ```
 
-com:
+---
 
-```json
-{
-  "store": false
-}
+## 3. Ative o Modo do desenvolvedor
+
+No canto superior direito da página, ative:
+
+```text
+Modo do desenvolvedor
 ```
 
-A assinatura do ChatGPT não é usada. O consumo ocorre na conta de API pertencente ao usuário da extensão.
+---
 
-## Segurança da API key
+## 4. Carregue a extensão
 
-A chave nunca está no código-fonte.
+Clique em:
 
-Há dois modos:
+```text
+Carregar sem compactação
+```
+
+Selecione a pasta da extensão que você extraiu ou clonou.
+
+É a pasta onde está o arquivo:
+
+```text
+manifest.json
+```
+
+---
+
+## 5. Abra o WhatsApp Web
+
+Acesse:
+
+```text
+https://web.whatsapp.com/
+```
+
+Se o WhatsApp Web já estava aberto antes da instalação, atualize a página.
+
+Você pode usar:
+
+```text
+Ctrl + Shift + R
+```
+
+---
+
+# Configurando a OpenAI
+
+A extensão precisa de uma chave da API da OpenAI para gerar as respostas.
+
+Na barra lateral da extensão, clique no ícone:
+
+```text
+⚙ Configurações
+```
+
+Informe sua API key da OpenAI.
+
+Você poderá escolher entre:
 
 ### Somente nesta sessão
 
-Usa `chrome.storage.session`.
-
-Ao perder a sessão da extensão/navegador, a chave precisa ser informada novamente.
+A chave é usada durante a sessão atual do navegador.
 
 ### Lembrar neste navegador
 
-Usa `chrome.storage.local`.
+A chave fica salva localmente no navegador.
 
-A extensão restringe o storage para `TRUSTED_CONTEXTS`, impedindo acesso direto do content script.
+Depois de informar a chave, use a opção de teste disponível nas configurações para confirmar que ela está funcionando.
 
-Como não há backend, uma chave armazenada no navegador não possui o mesmo nível de proteção de um segredo mantido em servidor. Recomenda-se criar uma chave/projeto da OpenAI dedicado e configurar limites de gastos na conta OpenAI.
+> A assinatura do ChatGPT e a API da OpenAI são serviços separados. Para usar esta extensão é necessário possuir uma chave válida da API da OpenAI.
 
-## Arquitetura
+---
 
-```text
-WhatsApp Web
-   |
-   +-- content script
-   |     |
-   |     +-- DOM adapter
-   |     +-- message observer
-   |     +-- composer/debounce
-   |     +-- sidebar
-   |
-   +--> chrome.runtime messages
-               |
-               v
-        Service Worker
-          |    |    |
-          |    |    +-- rate limiter / fila
-          |    +------- API key
-          +------------ IndexedDB
-               |
-               v
-          OpenAI API
-```
+# Começando a usar
 
-O service worker é a fronteira confiável. O content script nunca recebe a API key.
+Abra uma conversa no WhatsApp Web.
 
-## Histórico
+Na barra lateral da extensão:
 
-### Modo tradução por conversa
+1. Ative **IA** para aquela conversa.
+2. Digite normalmente no campo de mensagem do WhatsApp.
+3. Aguarde alguns segundos ou pressione **Ctrl + Espaço** para gerar as sugestões imediatamente.
+4. Revise a sugestão.
+5. Clique em **Usar** para colocar o texto no campo do WhatsApp ou em **Aplicar e enviar** para substituir o texto e enviar.
 
-Na barra lateral, marque **Usar IA neste contato**, configure **Meu idioma** e **Idioma do contato** e ative **Modo tradução nesta conversa**. Ambos os modos começam desativados.
+A extensão nunca decide enviar uma mensagem sozinha.
 
-- As mensagens recebidas ganham uma tradução junto ao balão, sem modificar o original do WhatsApp.
-- Sugestões são geradas no seu idioma. **Traduzir e aplicar** traduz a sugestão para o idioma do contato e preenche o campo; não envia a mensagem.
-- **Traduzir rascunho e aplicar** faz o mesmo com o texto digitado, sem precisar executar um prompt.
-- Originais e traduções ficam no IndexedDB local quando **Salvar histórico** está habilitado. Traduções de rascunhos são guardadas como traduções, não como mensagens enviadas.
-- Traduções salvas são reutilizadas. Texto editado, idioma ou modelo diferente gera uma nova tradução.
-- Para limitar consumo, a tradução automática considera as 20 mensagens recebidas mais recentes carregadas na conversa, usa a fila e os limites automáticos existentes e para após erro. **Traduzir balões do contato** reconcilia todas as mensagens carregadas (antigas ou novas, recebidas e enviadas) com o histórico antes de traduzir os textos recebidos. O status informa progresso, conclusão ou motivo do bloqueio.
-- A extensão traduz texto e legendas, não o conteúdo de áudio, imagens ou documentos. A detecção dos balões depende do DOM do WhatsApp.
-- Desativar a IA ou o modo tradução impede novas traduções. Alterar o rascunho ou trocar de conversa durante uma tradução impede a aplicação do resultado antigo.
-- Limpar histórico também apaga as traduções; elas seguem o prazo de retenção do histórico. Sem salvar histórico, não há persistência das traduções entre sessões.
+---
 
-O histórico é o **histórico observado pela extensão**, não um backup oficial do WhatsApp.
+# Sugerir a próxima mensagem
 
-Quando uma conversa é aberta:
-
-1. mensagens atualmente carregadas são reconciliadas;
-2. somente mensagens ainda não armazenadas são gravadas;
-3. um `MutationObserver` acompanha novas mensagens;
-4. a extensão não rola a conversa automaticamente para buscar histórico antigo.
-
-Se o WhatsApp fornecer um ID de mensagem, ele é usado. Caso contrário, existe um fingerprint local com tratamento de ocorrências repetidas.
-
-Cada registro é identificado pela combinação de conta, conversa e ID da mensagem. A extensão guarda `whatsappTimestamp` (data/hora original), `messageTime` (horário exibido), `rawTimestamp` (metadado original), `capturedAt` (primeira leitura) e `lastObservedAt` (última leitura). Relê-los não cria duplicatas; mensagens distintas no mesmo minuto continuam separadas pelo ID. Quando só há horário e não há data confiável, a data fica desconhecida, em vez de usar o horário da leitura como se fosse o de envio. O contexto recente usa a ordem da data/hora original.
-
-## Identificação da conta
-
-A extensão tenta localizar um identificador/JID estável da conta no estado local do WhatsApp Web.
-
-Quando consegue:
+Se você não souber o que escrever, use:
 
 ```text
-wa:<jid>
+Sugerir mensagem
 ```
 
-é usado como namespace local.
+A extensão utiliza o resumo e o contexto disponível da conversa para criar uma mensagem de continuidade.
 
-Se não for possível obter uma identidade confiável, a extensão cria um namespace temporário por sessão. Isso prioriza **não misturar dados de contas diferentes**, mesmo que o histórico desse fallback não sobreviva de forma estável a um reload.
+Você pode escolher o prompt que será usado antes de gerar a mensagem.
 
-## Resumo
+---
 
-O resumo pode ser:
+# Prompts por contato
 
-- manual;
-- automático;
-- desativado.
-
-No automático é possível escolher o número de mensagens.
+Além dos prompts globais, você pode criar prompts específicos para uma conversa.
 
 Exemplo:
 
 ```text
-a cada 2 mensagens
+Rafa ❤️
+Clientes Locenza
+Follow-up comercial
+Atendimento técnico
 ```
 
-As atualizações são incrementais:
+Um prompt específico aparece somente no contato ou grupo para o qual foi criado.
+
+---
+
+# Tradução
+
+A tradução pode ser ativada individualmente por conversa.
+
+Quando ativada, configure:
 
 ```text
-resumo atual + novas mensagens -> novo resumo
+Meu idioma
+Idioma do contato
 ```
 
-e não reprocessam toda a conversa em cada atualização.
+As sugestões ficam prontas no idioma configurado para o contato antes de serem usadas ou enviadas.
 
-O usuário também pode editar o resumo manualmente. Essa edição passa a ser a base da próxima atualização incremental.
+---
 
-## Prompts
+# Atualizando a extensão
 
-Um prompt contém:
-
-- nome;
-- instruções;
-- habilitado;
-- execução automática;
-- ordem;
-- enviar resumo;
-- enviar mensagens recentes;
-- número de mensagens recentes;
-- gerar resumo se estiver ausente;
-- limite de tokens de saída.
-
-Exemplo:
-
-```text
-Nome: Inglês
-
-Traduza a mensagem para inglês natural.
-Preserve significado, nomes, datas, números e valores.
-Retorne somente a tradução.
-```
-
-Prompts podem utilizar:
-
-```text
-{{texto}}
-{{resumo}}
-{{mensagens}}
-{{nome_contato}}
-```
-
-## Proteção contra consumo acidental
-
-A extensão possui várias barreiras independentes:
-
-- debounce;
-- tamanho mínimo do rascunho;
-- não repetir automaticamente o mesmo rascunho;
-- cache de 30 minutos para a mesma combinação;
-- fila;
-- no máximo 2 requisições simultâneas;
-- hard rate limit local;
-- máximo configurável de prompts automáticos;
-- limite diário local de tokens;
-- limite diário local de chamadas automáticas;
-- `max_output_tokens` em cada prompt;
-- cancelamento lógico de resultados obsoletos;
-- nenhuma repetição automática agressiva em erro.
-
-## Privacidade
-
-Sem telemetria na primeira versão.
-
-A extensão não envia para servidores próprios:
-
-- API key;
-- histórico;
-- resumo;
-- prompts;
-- métricas.
-
-Conteúdo só deixa o computador quando o usuário executa uma operação de IA, e somente o contexto selecionado para aquele prompt é enviado à OpenAI.
-
-## Visualizador de mídia
-
-Quando o WhatsApp abre mídia/documentos:
-
-```text
-sidebar -> oculta
-WhatsApp -> 100% da largura
-```
-
-Ao fechar:
-
-```text
-sidebar -> retorna
-estado -> preservado
-```
-
-O estado manual da sidebar é independente. Se o usuário a fechou, abrir/fechar uma mídia não a reabre sozinho.
-
-## Testes
+Se você instalou usando Git:
 
 ```bash
-npm test
-npm run check
+git pull
 ```
 
-`npm test` executa testes de regras puras.
-
-`npm run check` valida a sintaxe de todos os arquivos JavaScript.
-
-Veja também `docs/TESTES.md`.
-
-## Estrutura
+Depois abra:
 
 ```text
-dist/
-  background.js
-  content-script.js
-  media-viewer-guard.js
-
-src/
-  app.js
-  config.js
-  runtime.js
-  styles.js
-  ui.js
-
-  ai/
-    context-builder.js
-
-  background/
-    service-worker.js
-
-  options/
-    options.html
-    options.css
-    options.js
-
-  storage/
-    database.js
-
-  whatsapp/
-    dom.js
-
-tests/
-  core.test.js
-
-docs/
-  IMPLEMENTACAO.md
-  TESTES.md
+chrome://extensions
 ```
 
-## Limitações conhecidas
+e clique no botão de **recarregar** da extensão.
 
-O WhatsApp Web é uma aplicação privada e pode alterar sua estrutura de DOM. Por isso todos os seletores de WhatsApp ficam centralizados em `src/whatsapp/dom.js`.
+Por fim, atualize o WhatsApp Web com:
 
-A extensão evita classes CSS ofuscadas sempre que possível e prefere `data-testid`, `role`, `aria-*`, `contenteditable` e estrutura semântica.
+```text
+Ctrl + Shift + R
+```
 
-Caso o WhatsApp mude, a correção deve ficar concentrada nessa camada.
+Se você instalou usando **Download ZIP**, baixe a versão mais recente, substitua a pasta antiga e recarregue a extensão no Chrome.
+
+---
+
+# Problemas após instalar
+
+Se a barra lateral não aparecer:
+
+1. confirme que a extensão está ativada em `chrome://extensions`;
+2. clique em **Recarregar** na extensão;
+3. abra novamente o WhatsApp Web;
+4. pressione **Ctrl + Shift + R**.
+
+Se as sugestões não forem geradas:
+
+1. confirme que a IA está ativada para a conversa;
+2. confirme que a API key foi configurada;
+3. use o teste da API nas configurações;
+4. verifique se a IA não está pausada.
+
+---
+
+## Aviso
+
+O WhatsApp Web pode alterar sua interface ao longo do tempo. Caso alguma funcionalidade pare de funcionar após uma atualização do WhatsApp, verifique se existe uma versão mais recente desta extensão no repositório.
