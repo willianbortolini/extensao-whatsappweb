@@ -20,13 +20,30 @@
     return rect.width >= innerWidth * LARGE_WIDTH && rect.height >= innerHeight * LARGE_HEIGHT;
   }
 
+  // Media inside a normal conversation bubble is not an opened media viewer.
+  // In particular, sticker-heavy groups contain large images and canvases.
+  const CHAT_MESSAGE_SELECTOR = '#main .message-in, #main .message-out, #main [data-testid="msg-container"], #main [data-testid^="conv-msg-"], #main [data-id^="true_"], #main [data-id^="false_"]';
+
+  function chatMessageMedia(element) {
+    return Boolean(element?.closest(CHAT_MESSAGE_SELECTOR));
+  }
+
+  function containsConversationComposer(element) {
+    const main = document.querySelector('#main');
+    if (!main) return false;
+    if (element === main) return true;
+    const footer = main.querySelector('footer');
+    return Boolean(footer && element.contains(footer));
+  }
+
   function overlayLike(element) {
     if (!(element instanceof Element)) return false;
     if (element.getAttribute('role') === 'dialog') return true;
     if (element.getAttribute('aria-modal') === 'true') return true;
     if (element.hasAttribute('data-animate-modal-body')) return true;
     const testId = String(element.getAttribute('data-testid') || '').toLowerCase();
-    if (testId.includes('media') || testId.includes('viewer') || testId.includes('document')) return true;
+    // Generic "media" / "document" wrappers can be part of message bubbles.
+    if (testId.includes('viewer') || testId.includes('media-modal')) return true;
     const position = getComputedStyle(element).position;
     return position === 'fixed' || position === 'absolute';
   }
@@ -54,10 +71,20 @@
     return Boolean(element.querySelector(controls));
   }
 
+  function isActualViewer(element) {
+    return !chatMessageMedia(element) &&
+      !containsConversationComposer(element) &&
+      !element.closest('#wai-sidebar') &&
+      overlayLike(element) &&
+      large(element) &&
+      hasViewerContent(element);
+  }
+
   function largeViewerAncestor(element) {
+    if (chatMessageMedia(element)) return null;
     let current = element;
     while (current && current !== document.body) {
-      if (overlayLike(current) && large(current) && hasViewerContent(current)) return current;
+      if (isActualViewer(current)) return current;
       current = current.parentElement;
     }
     return null;
@@ -65,16 +92,15 @@
 
   function isOpen() {
     const explicit = document.querySelectorAll(
-      '[role="dialog"],[aria-modal="true"],[data-animate-modal-body],[data-testid*="media" i],[data-testid*="viewer" i],[data-testid*="document" i]'
+      '[role="dialog"],[aria-modal="true"],[data-animate-modal-body],[data-testid*="viewer" i],[data-testid*="media-modal" i]'
     );
     for (const candidate of explicit) {
-      if (candidate.closest('#wai-sidebar')) continue;
-      if (large(candidate) && hasViewerContent(candidate)) return true;
+      if (isActualViewer(candidate)) return true;
     }
 
     const media = document.querySelectorAll('video,canvas,iframe,embed,object,img');
     for (const item of media) {
-      if (item.closest('#wai-sidebar')) continue;
+      if (item.closest('#wai-sidebar') || chatMessageMedia(item)) continue;
       const rect = item.getBoundingClientRect();
       if (rect.width < 220 && rect.height < 220) continue;
       if (largeViewerAncestor(item)) return true;
