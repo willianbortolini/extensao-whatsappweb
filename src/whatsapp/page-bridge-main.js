@@ -112,6 +112,7 @@
         break;
       }
     }
+    if (!jid && !title) return '';
     return jid + '|' + title;
   }
 
@@ -198,7 +199,7 @@
     return Boolean(await waitUntil(() => {
       if (domText(composer) !== normalizedExpected) return false;
       const stateText = lexicalText(editor, lexical);
-      return stateText == null || stateText === normalizedExpected;
+      return stateText !== null && stateText === normalizedExpected;
     }, timeoutMs));
   }
 

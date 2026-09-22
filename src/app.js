@@ -642,6 +642,7 @@ export class WhatsAppAIApp {
     }
 
     if (!result?.ok) {
+      console.warn('[WAI] Falha ao aplicar sugestão no composer:', result);
       this.ui.setState({ sendStatus: this.composerFailureMessage(result, 'aplicar a sugestão') });
       return false;
     }
@@ -696,6 +697,7 @@ export class WhatsAppAIApp {
       }
 
       if (!result?.ok) {
+        console.warn('[WAI] Falha na transação de substituir e enviar:', result);
         this.ui.setState({ sendStatus: this.composerFailureMessage(result, 'substituir e enviar a sugestão') });
         return false;
       }

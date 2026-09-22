@@ -240,3 +240,14 @@ test('quando Lexical não está acessível, o fallback de paste substitui sem co
   assert.equal(result.method, 'paste');
   assert.equal(fixture.getText(), 'Mensagem de teste.');
 });
+
+
+test('Lexical preserva múltiplas linhas, acentos e emoji sem concatenar', async () => {
+  const fixture = createFixture();
+  const suggestion = 'Olá! 👋\nSegunda linha com ação.';
+  const result = await fixture.request('REPLACE', { text: suggestion });
+  assert.equal(result.ok, true);
+  assert.equal(result.method, 'lexical');
+  assert.equal(fixture.getText(), suggestion);
+  assert.doesNotMatch(fixture.getText(), /teste envio/);
+});
