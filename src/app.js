@@ -1538,7 +1538,6 @@ export class WhatsAppAIApp {
     if (!result.ok) return false;
 
     this.prompts = result.prompts || [];
-    if (!this.chat) this.allPrompts = [...this.prompts];
     this.lastAutoDraft = null;
     this.chooseSuggestedMessagePrompt();
     this.ui?.setState({

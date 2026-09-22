@@ -646,10 +646,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'PROMPT_LIST_FOR_CHAT': {
         assertSize(payload.accountId, 500, 'accountId');
         assertSize(payload.chatId, 500, 'chatId');
+        if (!payload.accountId || !payload.chatId) {
+          throw Object.assign(new Error('Conta e conversa são obrigatórias para listar prompts específicos.'), {
+            code: 'INVALID_PROMPT_SCOPE'
+          });
+        }
         return { prompts: await listPromptsForChat(payload.accountId, payload.chatId) };
       }
 
       case 'PROMPT_SAVE': {
+        const rawScope = payload.prompt?.scope;
+        if (rawScope != null && ![PROMPT_SCOPE.GLOBAL, PROMPT_SCOPE.CHAT].includes(rawScope)) {
+          throw Object.assign(new Error('Escopo de prompt inválido.'), { code: 'INVALID_PROMPT_SCOPE' });
+        }
         const normalized = normalizePromptInput(payload.prompt);
         if (!normalized.name || !normalized.instructions) {
           throw Object.assign(new Error('Nome e instruções são obrigatórios.'), { code: 'INVALID_PROMPT' });
